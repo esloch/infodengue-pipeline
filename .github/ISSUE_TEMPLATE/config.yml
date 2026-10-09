@@ -1,0 +1,15 @@
+# Ref: https://help.github.com/en/github/building-a-strong-community/configuring-issue-templates-for-your-repository#configuring-the-template-chooser
+blank_issues_enabled: true
+contact_links:
+  - name: 🙋  Usage Questions
+    url: https://github.com/esloch/infodengue-pipeline.git/discussions
+    about: |
+      Use Infodengue Pipeline's GitHub Discussions to ask "How do I do X with Infodengue Pipeline?".
+  - name: 📖  Tutorial
+    url: https://github.com/esloch/infodengue-pipeline.git
+    about: |
+      The Infodengue Pipeline tutorial is continually updated and provides an in depth walkthrough
+      of how to use the latest release of Infodengue Pipeline.
+  - name: 📝  Infodengue Pipeline Code of Conduct
+    url: https://github.com/esloch/infodengue-pipeline.git/coc/CODE_OF_CONDUCT.md
+    about: Expectations for how people will interact with each other on Infodengue Pipeline's GitHub.
