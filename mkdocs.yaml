@@ -9,6 +9,22 @@ site_dir: ./build/
 nav:
   - index.md
   - Installation: installation.md
+  - Architecture: architecture.md
+  - Ingestion: ingestion.md
+  - MinIO: minio.md
+  - Events: events.md
+  - Orchestration: orchestration.md
+  - Analysis contract: analysis-contract.md
+  - Database: database.md
+  - Migration plan: migration-plan.md
+  - Development: development.md
+  - Operations: operations.md
+  - Architecture decisions:
+      - ADR 0001: adr/0001-standalone-pipeline-service.md
+      - ADR 0002: adr/0002-minio-transient-ingress.md
+      - ADR 0003: adr/0003-rabbitmq-celery-coordination.md
+      - ADR 0004: adr/0004-transactional-outbox.md
+      - ADR 0005: adr/0005-analysis-as-external-oci-job.md
   - Changelog: changelog.md
   - Contributing: contributing.md
 theme:

@@ -19,8 +19,21 @@ using a `src` layout, `uv`, Click, MkDocs Material, and GitHub Actions.
 
 ## Local development
 
-Install Python 3.11 and `uv`, then run `uv sync`. The first implementation
-branch will add the development services and quality tasks.
+Install Python 3.11, `uv`, Docker Compose, and containers-sugar. Then run:
+
+```bash
+uv sync --extra dev
+uv run pre-commit run --all-files
+uv run makim quality.all
+uv run makim tests.all
+sugar --profile dev compose up -d
+uv run makim db.upgrade
+uv run makim dev.smoke
+```
+
+The local stack binds only to loopback and uses development-only credentials
+and named volumes. The smoke test never starts an analysis job. See
+[development](docs/development.md) and [operations](docs/operations.md).
 
 ## License
 

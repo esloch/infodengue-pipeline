@@ -1,0 +1,148 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pipeline_dev
+      POSTGRES_USER: pipeline_dev
+      POSTGRES_PASSWORD: pipeline_dev_only
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - pipeline_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline_dev -d pipeline_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  rabbitmq:
+    image: rabbitmq:3.13.7-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: pipeline_dev
+      RABBITMQ_DEFAULT_PASS: pipeline_dev_only
+    ports:
+      - "127.0.0.1:5673:5672"
+      - "127.0.0.1:15673:15672"
+    volumes:
+      - pipeline_rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: minio/minio:RELEASE.2024-03-30T09-41-56Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: pipeline_dev
+      MINIO_ROOT_PASSWORD: pipeline_dev_only
+    ports:
+      - "127.0.0.1:9002:9000"
+      - "127.0.0.1:9003:9001"
+    volumes:
+      - pipeline_minio:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  minio-init:
+    build:
+      context: ..
+      dockerfile: containers/Dockerfile
+    env_file: ../.env.example
+    command: ["python", "-m", "infodengue_pipeline", "bootstrap-minio"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+  worker-ingestion:
+    build:
+      context: ..
+      dockerfile: containers/Dockerfile
+    env_file: ../.env.example
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.adapters.rabbitmq.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=pipeline.ingestion
+      - --hostname=worker-ingestion@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A infodengue_pipeline.adapters.rabbitmq.celery_app:celery_app inspect ping --timeout=5 | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 5
+    volumes:
+      - pipeline_incoming:/var/lib/pipeline/incoming
+      - pipeline_canonical:/var/lib/pipeline/canonical
+
+  worker-events:
+    build:
+      context: ..
+      dockerfile: containers/Dockerfile
+    env_file: ../.env.example
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.adapters.rabbitmq.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=pipeline.events
+      - --hostname=worker-events@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A infodengue_pipeline.adapters.rabbitmq.celery_app:celery_app inspect ping --timeout=5 | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 5
+
+  worker-orchestration:
+    build:
+      context: ..
+      dockerfile: containers/Dockerfile
+    env_file: ../.env.example
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.adapters.rabbitmq.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=pipeline.orchestration
+      - --hostname=worker-orchestration@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A infodengue_pipeline.adapters.rabbitmq.celery_app:celery_app inspect ping --timeout=5 | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 5
+
+volumes:
+  pipeline_pgdata:
+  pipeline_rabbitmq:
+  pipeline_minio:
+  pipeline_incoming:
+  pipeline_canonical:
