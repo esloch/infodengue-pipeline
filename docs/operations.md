@@ -4,6 +4,19 @@ Phase 0 operational resources are limited to local development Compose
 services: PostgreSQL, RabbitMQ, MinIO, and three queue-specific Celery workers.
 No worker mounts a Docker socket. Credentials are development placeholders.
 
+Phase 0 staging filesystem validation uses the staging server's local ext4
+filesystem at `/opt/services/infodengue-pipeline/staging-data/sinan/pipeline-validation`.
+Run it with an explicit staging environment and canonical root:
+
+```sh
+INFODENGUE_PIPELINE_ENVIRONMENT=staging \
+INFODENGUE_PIPELINE_CANONICAL_ROOT=/opt/services/infodengue-pipeline/staging-data/sinan/pipeline-validation \
+uv run makim staging.storage-smoke
+```
+
+This validates local ext4 storage only. It is not a Hetzner StorageBox
+validation and does not establish StorageBox parity.
+
 Production operation, alerting, backups, retries, and cutover procedures are
 not yet implemented. When a scientific job and validated outputs are ready,
 the later pipeline may invoke AlertaDengue's stable runtime refresh contract:

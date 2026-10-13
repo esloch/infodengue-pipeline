@@ -53,3 +53,9 @@ groups:
           INFODENGUE_PIPELINE_RABBITMQ_URL=amqp://pipeline_dev:pipeline_dev_only@localhost:5673//
           INFODENGUE_PIPELINE_MINIO_ENDPOINT=localhost:9002
           python scripts/smoke_dev.py
+
+  staging:
+    tasks:
+      storage-smoke:
+        help: Validate canonical storage on the staging server's local filesystem
+        run: python scripts/smoke_staging_storage.py

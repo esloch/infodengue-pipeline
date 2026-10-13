@@ -18,6 +18,11 @@ No AlertaDengue changes happen in Phase 0. Production ingestion remains in its
 current location until staging parity, operational readiness, and a separately
 approved cutover are complete. Production MinIO ownership has not moved.
 
+Phase 0 filesystem validation runs on the staging server's local ext4 disk at
+`/opt/services/infodengue-pipeline/staging-data/sinan/pipeline-validation`.
+This is not a Hetzner StorageBox validation and does not claim StorageBox
+parity.
+
 Dengue (A90), chikungunya (A92.0), and Zika (A928) are supported domain
 diseases. Zika remains optional for current readiness; the required disease set
 is configuration, not workflow schema. Set
