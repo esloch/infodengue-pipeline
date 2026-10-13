@@ -21,6 +21,7 @@ from infodengue_pipeline.domain.epiweek import Epiweek
     [
         (Disease.DENGUE, 'DenInfodengue_BR_202639.csv', 'dengue'),
         (Disease.CHIKUNGUNYA, 'ChikInfodengue_BR_202639.csv', 'chik'),
+        (Disease.ZIKA, 'Infodengue_BR_202639.csv', 'zika'),
     ],
 )
 def test_canonical_destination(

@@ -25,6 +25,14 @@ RabbitMQ/Celery, MinIO, and filesystem adapters implement infrastructure
 boundaries. Phase 0 provides state and contracts; it does not yet parse or
 merge SINAN data or launch external jobs.
 
+Dengue (A90), chikungunya (A92.0), and Zika (A928) are supported domain
+diseases. Zika is currently optional for analysis readiness. The set of
+required diseases comes from configuration rather than workflow table
+structure, so Zika can be made required without a schema redesign. The
+AlertaDengue historical and runtime ecosystem already contains Zika data
+structures; the pipeline preserves that capability and keeps A92.0 distinct
+from A928.
+
 # Environment boundary
 
 The Compose stack is development-only, binds published ports to loopback, and

@@ -73,6 +73,7 @@ repos:
         entry: vulture
         language: system
         files: "src/infodengue_pipeline"
+        exclude: ^src/infodengue_pipeline/ports/contracts\.py$
         description: Find unused Python code.
         pass_filenames: true
         types:

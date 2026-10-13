@@ -2,10 +2,13 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from infodengue_pipeline.domain.disease import Disease, disease_from_cid10
+from infodengue_pipeline.domain.workflow import DEFAULT_REQUIRED_DISEASES
 
 
 class Settings(BaseSettings):
@@ -34,6 +37,36 @@ class Settings(BaseSettings):
     canonical_root: Path = Path('.local/canonical')
     analysis_image: str | None = None
     analysis_cores: int = Field(default=1, ge=1, le=64)
+    required_diseases: Annotated[frozenset[Disease], NoDecode] = (
+        DEFAULT_REQUIRED_DISEASES
+    )
+
+    @field_validator('required_diseases', mode='before')
+    @classmethod
+    def parse_required_diseases(cls, value: object) -> frozenset[Disease]:
+        """Parse a comma-separated list of canonical CID-10 codes."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError('required_diseases must not be empty')
+        values = value.split(',') if isinstance(value, str) else value
+        if not isinstance(values, (list, tuple, set, frozenset)):
+            raise ValueError(
+                'required_diseases must be a comma-separated list of codes'
+            )
+        if not values:
+            raise ValueError('required_diseases must not be empty')
+        diseases: list[Disease] = []
+        for item in values:
+            if not isinstance(item, (str, Disease)):
+                raise ValueError(f'invalid required disease code: {item!r}')
+            code = item.strip().upper()
+            if not code:
+                raise ValueError(
+                    'required_diseases must not contain empty codes'
+                )
+            diseases.append(disease_from_cid10(code))
+        if len(set(diseases)) != len(diseases):
+            raise ValueError('required_diseases contains duplicate codes')
+        return frozenset(diseases)
 
     @field_validator('minio_bucket')
     @classmethod

@@ -7,6 +7,7 @@ import pytest
 from infodengue_pipeline.adapters.postgres.models import (
     OutboxEventRow,
     OutboxStatus,
+    WorkflowInputRow,
     WorkflowRow,
 )
 from infodengue_pipeline.application.services import (
@@ -16,8 +17,12 @@ from infodengue_pipeline.application.services import (
 )
 from infodengue_pipeline.domain.disease import Disease
 from infodengue_pipeline.domain.epiweek import Epiweek
-from infodengue_pipeline.domain.workflow import WorkflowStatus
+from infodengue_pipeline.domain.workflow import (
+    DEFAULT_REQUIRED_DISEASES,
+    WorkflowStatus,
+)
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -96,6 +101,113 @@ def test_epiweek_readiness_and_idempotent_claim(
     assert coordinator.record(chik).status is WorkflowStatus.QUEUED
     with sessions() as session:
         assert len(session.scalars(select(WorkflowRow)).all()) == 1
+        assert len(session.scalars(select(WorkflowInputRow)).all()) == 2
+
+
+@pytest.mark.parametrize(
+    ('diseases', 'required_diseases', 'expected'),
+    [
+        ((Disease.DENGUE,), None, WorkflowStatus.WAITING),
+        ((Disease.CHIKUNGUNYA,), None, WorkflowStatus.WAITING),
+        ((Disease.ZIKA,), None, WorkflowStatus.WAITING),
+        ((Disease.DENGUE, Disease.ZIKA), None, WorkflowStatus.WAITING),
+        ((Disease.CHIKUNGUNYA, Disease.ZIKA), None, WorkflowStatus.WAITING),
+        (
+            (Disease.DENGUE, Disease.CHIKUNGUNYA),
+            None,
+            WorkflowStatus.READY,
+        ),
+        (
+            (Disease.DENGUE, Disease.CHIKUNGUNYA, Disease.ZIKA),
+            None,
+            WorkflowStatus.READY,
+        ),
+        (
+            (Disease.DENGUE, Disease.CHIKUNGUNYA),
+            frozenset((*DEFAULT_REQUIRED_DISEASES, Disease.ZIKA)),
+            WorkflowStatus.WAITING,
+        ),
+        (
+            (Disease.DENGUE, Disease.CHIKUNGUNYA, Disease.ZIKA),
+            frozenset((*DEFAULT_REQUIRED_DISEASES, Disease.ZIKA)),
+            WorkflowStatus.READY,
+        ),
+    ],
+)
+def test_configurable_disease_readiness(
+    sessions: sessionmaker[Session],
+    work_factory,
+    completed_event,
+    diseases: tuple[Disease, ...],
+    required_diseases: frozenset[Disease] | None,
+    expected: WorkflowStatus,
+) -> None:
+    """Persist all inputs while applying the configured readiness set."""
+    kwargs = (
+        {'required_diseases': required_diseases}
+        if required_diseases is not None
+        else {}
+    )
+    coordinator = CoordinateEpiweek(work_factory, **kwargs)
+    snapshot = None
+    for disease in diseases:
+        snapshot = coordinator.record(
+            completed_event(disease, fingerprint=f'{disease.value}-source')
+        )
+    assert snapshot is not None
+    assert snapshot.status is expected
+    assert snapshot.readiness.received_diseases == frozenset(diseases)
+    with sessions() as session:
+        assert len(session.scalars(select(WorkflowInputRow)).all()) == len(
+            diseases
+        )
+
+
+def test_repeated_same_disease_event_remains_one_input(
+    sessions: sessionmaker[Session], work_factory, completed_event
+) -> None:
+    """Repeated delivery does not duplicate a disease input row."""
+    coordinator = CoordinateEpiweek(work_factory)
+    event = completed_event(Disease.ZIKA)
+    first = coordinator.record(event)
+    second = coordinator.record(event)
+    assert first.status is WorkflowStatus.WAITING
+    assert second.status is WorkflowStatus.WAITING
+    assert second.readiness.inputs[Disease.ZIKA].run_id == event.run_id
+    with sessions() as session:
+        rows = session.scalars(select(WorkflowInputRow)).all()
+        assert len(rows) == 1
+        assert rows[0].disease is Disease.ZIKA
+
+
+def test_workflow_input_rejects_duplicate_disease(
+    sessions: sessionmaker[Session],
+) -> None:
+    """The database enforces one input row per workflow disease."""
+    workflow_id = uuid4()
+    with sessions() as session:
+        session.add(
+            WorkflowRow(
+                workflow_id=workflow_id,
+                epiweek=202639,
+                status=WorkflowStatus.WAITING,
+            )
+        )
+        session.flush()
+        session.add_all(
+            [
+                WorkflowInputRow(
+                    workflow_input_id=uuid4(),
+                    workflow_id=workflow_id,
+                    disease=Disease.ZIKA,
+                    run_id=uuid4(),
+                    fingerprint=f'fingerprint-{index}',
+                )
+                for index in range(2)
+            ]
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
 
 
 def test_different_epiweeks_never_combine(

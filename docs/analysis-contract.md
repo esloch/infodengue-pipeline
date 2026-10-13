@@ -8,6 +8,6 @@ The job receives `ALERTA_DB_HOST`, `ALERTA_DB_PORT`, `ALERTA_DB_NAME`,
 `ALERTA_DB_USER`, `ALERTA_DB_PASSWORD`, and `ALERTA_OUT_DIR=/outputs`.
 Optional correlation values are `ALERTA_JOB_ID` and
 `ALERTA_INPUT_FINGERPRINT`. The invocation corresponds to
-`makim pipeline.refresh-alertas-job --week YYYYWW --states ALL --cores N
+`uv run makim pipeline.refresh-alertas-job --week YYYYWW --states ALL --cores N
 --load true`. The OCI adapter is deferred. No real analysis job is run in
 Phase 0.

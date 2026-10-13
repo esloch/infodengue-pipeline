@@ -1,14 +1,18 @@
 """SQLAlchemy mappings for pipeline owned state."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
+from infodengue_pipeline.domain.disease import Disease
 from infodengue_pipeline.domain.workflow import WorkflowStatus
 from sqlalchemy import (
     JSON,
     DateTime,
     Enum,
+    ForeignKey,
     Integer,
     MetaData,
     String,
@@ -17,7 +21,12 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+)
 
 
 class Base(DeclarativeBase):
@@ -51,10 +60,11 @@ class WorkflowRow(Base):
         Uuid(as_uuid=True), primary_key=True, default=uuid4
     )
     epiweek: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    dengue_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
-    dengue_fingerprint: Mapped[str | None] = mapped_column(String(128))
-    chikungunya_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
-    chikungunya_fingerprint: Mapped[str | None] = mapped_column(String(128))
+    inputs: Mapped[list[WorkflowInputRow]] = relationship(
+        back_populates='workflow',
+        cascade='all, delete-orphan',
+        lazy='selectin',
+    )
     status: Mapped[WorkflowStatus] = mapped_column(
         Enum(
             WorkflowStatus,
@@ -75,6 +85,39 @@ class WorkflowRow(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class WorkflowInputRow(Base):
+    """One persisted ingestion identity for a workflow disease."""
+
+    __tablename__ = 'workflow_input'
+    __table_args__ = (
+        UniqueConstraint(
+            'workflow_id', 'disease', name='uq_workflow_input_disease'
+        ),
+        {'schema': 'pipeline'},
+    )
+
+    workflow_input_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    workflow_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey('pipeline.workflow.workflow_id', ondelete='CASCADE'),
+        nullable=False,
+    )
+    disease: Mapped[Disease] = mapped_column(
+        Enum(
+            Disease,
+            values_callable=enum_values,
+            native_enum=False,
+            length=8,
+        ),
+        nullable=False,
+    )
+    run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    workflow: Mapped[WorkflowRow] = relationship(back_populates='inputs')
 
 
 class OutboxEventRow(Base):

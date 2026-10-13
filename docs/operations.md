@@ -9,7 +9,7 @@ not yet implemented. When a scientific job and validated outputs are ready,
 the later pipeline may invoke AlertaDengue's stable runtime refresh contract:
 
 ```text
-makim deployment.refresh-runtime --env prod --week YYYYWW
+uv run makim deployment.refresh-runtime --env prod --week YYYYWW
 ```
 
 That operation is documented only and is not invoked by this repository in

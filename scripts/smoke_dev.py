@@ -13,6 +13,9 @@ from infodengue_pipeline.adapters.minio.client import build_object_store
 from infodengue_pipeline.adapters.postgres.engine import session_factory
 from infodengue_pipeline.adapters.postgres.models import WorkflowRow
 from infodengue_pipeline.adapters.rabbitmq.celery_app import celery_app
+from infodengue_pipeline.adapters.rabbitmq.publisher import (
+    CeleryEventPublisher,
+)
 from infodengue_pipeline.config import get_settings
 from infodengue_pipeline.domain.disease import Disease
 from infodengue_pipeline.domain.epiweek import Epiweek
@@ -73,16 +76,15 @@ def main() -> None:
     logger.info('minio_smoke_passed', object_key=key)
 
     week = Epiweek.parse(202639)
-    task = celery_app.tasks['pipeline.events.ingestion_completed']
+    publisher = CeleryEventPublisher(celery_app)
     for disease in (Disease.DENGUE, Disease.CHIKUNGUNYA):
-        event = IngestionCompleted(
-            event_id=uuid4(),
+        event = IngestionCompleted.new(
             run_id=uuid4(),
             disease=disease,
-            epiweek=str(week),
+            epiweek=week,
             fingerprint=f'dev-smoke-{disease.value}',
         )
-        task.apply_async(kwargs={'payload': event.model_dump(mode='json')})
+        publisher.publish(event)
 
     factory = session_factory()
     deadline = time.monotonic() + 30

@@ -46,8 +46,8 @@ class SqlUnitOfWork:
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
     ) -> None:
         """Close the session and roll back incomplete transactions."""
         if self._session is None:

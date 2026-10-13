@@ -25,10 +25,6 @@ def upgrade() -> None:
         'workflow',
         sa.Column('workflow_id', sa.Uuid(), primary_key=True),
         sa.Column('epiweek', sa.Integer(), nullable=False),
-        sa.Column('dengue_run_id', sa.Uuid()),
-        sa.Column('dengue_fingerprint', sa.String(128)),
-        sa.Column('chikungunya_run_id', sa.Uuid()),
-        sa.Column('chikungunya_fingerprint', sa.String(128)),
         sa.Column('status', sa.String(16), nullable=False),
         sa.Column('queued_fingerprint', sa.String(64)),
         sa.Column(
@@ -44,6 +40,23 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.UniqueConstraint('epiweek', name='uq_workflow_epiweek'),
+        schema='pipeline',
+    )
+    op.create_table(
+        'workflow_input',
+        sa.Column('workflow_input_id', sa.Uuid(), primary_key=True),
+        sa.Column(
+            'workflow_id',
+            sa.Uuid(),
+            sa.ForeignKey('pipeline.workflow.workflow_id', ondelete='CASCADE'),
+            nullable=False,
+        ),
+        sa.Column('disease', sa.String(8), nullable=False),
+        sa.Column('run_id', sa.Uuid(), nullable=False),
+        sa.Column('fingerprint', sa.String(128), nullable=False),
+        sa.UniqueConstraint(
+            'workflow_id', 'disease', name='uq_workflow_input_disease'
+        ),
         schema='pipeline',
     )
     op.create_index(
@@ -89,5 +102,6 @@ def downgrade() -> None:
         table_name='workflow',
         schema='pipeline',
     )
+    op.drop_table('workflow_input', schema='pipeline')
     op.drop_table('workflow', schema='pipeline')
     op.execute('DROP SCHEMA pipeline')

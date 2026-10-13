@@ -25,9 +25,12 @@ def ping() -> str:
 )
 def ingestion_completed(payload: dict[str, object]) -> str:
     """Validate and record one ingested disease's epiweek readiness."""
-    configure_logging(get_settings().log_level)
+    settings = get_settings()
+    configure_logging(settings.log_level)
     event = IngestionCompleted.model_validate(payload)
-    workflow = CoordinateEpiweek(unit_of_work).record(event)
+    workflow = CoordinateEpiweek(
+        unit_of_work, required_diseases=settings.required_diseases
+    ).record(event)
     return workflow.status.value
 
 

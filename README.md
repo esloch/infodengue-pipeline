@@ -26,7 +26,7 @@ uv sync --extra dev
 uv run pre-commit run --all-files
 uv run makim quality.all
 uv run makim tests.all
-sugar --profile dev compose up -d
+uv run sugar --profile dev compose up -d
 uv run makim db.upgrade
 uv run makim dev.smoke
 ```

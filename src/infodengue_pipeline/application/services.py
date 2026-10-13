@@ -4,9 +4,11 @@ from dataclasses import replace
 from typing import Callable
 from uuid import uuid4
 
+from infodengue_pipeline.domain.disease import Disease
 from infodengue_pipeline.domain.epiweek import Epiweek
 from infodengue_pipeline.domain.events import IngestionCompleted
 from infodengue_pipeline.domain.workflow import (
+    DEFAULT_REQUIRED_DISEASES,
     IngestionInput,
     Readiness,
     WorkflowStatus,
@@ -35,8 +37,15 @@ class RecordIngestionCompletion:
 class CoordinateEpiweek:
     """Persist same epiweek readiness without scheduling scientific work."""
 
-    def __init__(self, unit_of_work: Callable[[], UnitOfWork]) -> None:
+    def __init__(
+        self,
+        unit_of_work: Callable[[], UnitOfWork],
+        required_diseases: frozenset[Disease] = DEFAULT_REQUIRED_DISEASES,
+    ) -> None:
         self._unit_of_work = unit_of_work
+        self._required_diseases = frozenset(required_diseases)
+        if not self._required_diseases:
+            raise ValueError('required_diseases must not be empty')
 
     def record(self, event: IngestionCompleted) -> WorkflowSnapshot:
         """Apply an ingestion event idempotently to one epiweek."""
@@ -46,8 +55,18 @@ class CoordinateEpiweek:
             if current is None:
                 current = WorkflowSnapshot(
                     workflow_id=uuid4(),
-                    readiness=Readiness(epiweek),
+                    readiness=Readiness(
+                        epiweek,
+                        required_diseases=self._required_diseases,
+                    ),
                     status=WorkflowStatus.WAITING,
+                )
+            else:
+                current = replace(
+                    current,
+                    readiness=current.readiness.with_required_diseases(
+                        self._required_diseases
+                    ),
                 )
             incoming = IngestionInput(event.run_id, event.fingerprint)
             readiness = current.readiness.with_input(event.disease, incoming)
@@ -71,9 +90,17 @@ class CoordinateEpiweek:
         """Claim current inputs at most once per fingerprint."""
         with self._unit_of_work() as work:
             current = work.workflows.get_for_update(epiweek)
-            if current is None or current.status is not WorkflowStatus.READY:
+            if current is None:
                 return None
-            fingerprint = current.readiness.input_fingerprint
+            readiness = current.readiness.with_required_diseases(
+                self._required_diseases
+            )
+            if (
+                current.status is not WorkflowStatus.READY
+                or not readiness.ready
+            ):
+                return None
+            fingerprint = readiness.input_fingerprint
             if fingerprint is None:
                 return None
             queued = replace(

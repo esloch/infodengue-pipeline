@@ -6,6 +6,7 @@ from uuid import UUID
 from infodengue_pipeline.adapters.postgres.models import (
     OutboxEventRow,
     OutboxStatus,
+    WorkflowInputRow,
     WorkflowRow,
 )
 from infodengue_pipeline.domain.epiweek import Epiweek
@@ -39,21 +40,15 @@ class SqlWorkflowRepository:
         )
         if row is None:
             return None
-        dengue = (
-            IngestionInput(row.dengue_run_id, row.dengue_fingerprint)
-            if row.dengue_run_id is not None
-            and row.dengue_fingerprint is not None
-            else None
-        )
-        chik = (
-            IngestionInput(row.chikungunya_run_id, row.chikungunya_fingerprint)
-            if row.chikungunya_run_id is not None
-            and row.chikungunya_fingerprint is not None
-            else None
-        )
+        inputs = {
+            input_row.disease: IngestionInput(
+                input_row.run_id, input_row.fingerprint
+            )
+            for input_row in row.inputs
+        }
         return WorkflowSnapshot(
             workflow_id=row.workflow_id,
-            readiness=Readiness(epiweek, dengue, chik),
+            readiness=Readiness(epiweek, inputs),
             status=row.status,
             queued_fingerprint=row.queued_fingerprint,
         )
@@ -68,20 +63,23 @@ class SqlWorkflowRepository:
                 epiweek=int(readiness.epiweek),
             )
             self._session.add(row)
-        row.dengue_run_id = (
-            readiness.dengue.run_id if readiness.dengue else None
-        )
-        row.dengue_fingerprint = (
-            readiness.dengue.fingerprint if readiness.dengue else None
-        )
-        row.chikungunya_run_id = (
-            readiness.chikungunya.run_id if readiness.chikungunya else None
-        )
-        row.chikungunya_fingerprint = (
-            readiness.chikungunya.fingerprint
-            if readiness.chikungunya
-            else None
-        )
+        existing_inputs = {item.disease: item for item in row.inputs}
+        for item in tuple(row.inputs):
+            if item.disease not in readiness.inputs:
+                row.inputs.remove(item)
+        for disease, incoming in readiness.inputs.items():
+            existing_item = existing_inputs.get(disease)
+            if existing_item is None:
+                row.inputs.append(
+                    WorkflowInputRow(
+                        disease=disease,
+                        run_id=incoming.run_id,
+                        fingerprint=incoming.fingerprint,
+                    )
+                )
+            else:
+                existing_item.run_id = incoming.run_id
+                existing_item.fingerprint = incoming.fingerprint
         row.status = workflow.status
         row.queued_fingerprint = workflow.queued_fingerprint
 
