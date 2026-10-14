@@ -4,6 +4,7 @@ import hashlib
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 from uuid import UUID
@@ -174,6 +175,15 @@ class IngestionInput:
 
     run_id: UUID
     fingerprint: str
+    completed_at: datetime
+
+    def __post_init__(self) -> None:
+        """Require an aware timestamp for deterministic input ordering."""
+        if (
+            self.completed_at.tzinfo is None
+            or self.completed_at.utcoffset() is None
+        ):
+            raise ValueError('completed_at must be timezone aware')
 
 
 @dataclass(frozen=True)
@@ -212,7 +222,13 @@ class Readiness:
     def with_input(
         self, disease: Disease, incoming: IngestionInput
     ) -> 'Readiness':
-        """Record the latest successful input for a supported disease."""
+        """Keep the newest successful input for a supported disease."""
+        existing = self.inputs.get(disease)
+        if existing is not None and (
+            incoming.completed_at,
+            incoming.run_id.int,
+        ) <= (existing.completed_at, existing.run_id.int):
+            return self
         updated = dict(self.inputs)
         updated[disease] = incoming
         if self.required_diseases is None:

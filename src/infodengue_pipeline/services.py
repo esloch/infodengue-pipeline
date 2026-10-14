@@ -29,7 +29,7 @@ class RecordIngestionCompletion:
         self._unit_of_work = unit_of_work
 
     def execute(self, event: IngestionCompleted) -> bool:
-        """Persist an event once; future merge work shares this transaction."""
+        """Persist a producer event once in its own transaction."""
         with self._unit_of_work() as work:
             inserted = work.outbox.add(event)
             work.commit()
@@ -87,7 +87,9 @@ class CoordinateEpiweek:
                         required_diseases
                     ),
                 )
-            incoming = IngestionInput(event.run_id, event.fingerprint)
+            incoming = IngestionInput(
+                event.run_id, event.fingerprint, event.completed_at
+            )
             readiness = current.readiness.with_input(event.disease, incoming)
             fingerprint = readiness.input_fingerprint
             if not readiness.ready:

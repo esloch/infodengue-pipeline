@@ -1,6 +1,6 @@
 """Domain validation and readiness behavior."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -19,6 +19,15 @@ from infodengue_pipeline.models import (
 )
 from infodengue_pipeline.protocols import AnalysisJobRequest
 from pydantic import ValidationError
+
+COMPLETED_AT = datetime(2026, 10, 14, tzinfo=timezone.utc)
+
+
+def ingestion_input(fingerprint: str, *, seconds: int = 0) -> IngestionInput:
+    """Create ordered ingestion inputs for readiness assertions."""
+    return IngestionInput(
+        uuid4(), fingerprint, COMPLETED_AT + timedelta(seconds=seconds)
+    )
 
 
 def test_workflow_identity_uses_unique_index_only() -> None:
@@ -125,11 +134,83 @@ def test_event_rejects_naive_time(completed_event) -> None:
         IngestionCompleted.model_validate(payload)
 
 
+def test_event_factory_has_stable_identity_and_explicit_time() -> None:
+    """A run maps to one event ID, independent of other payload fields."""
+    run_id = uuid4()
+    kwargs = dict(
+        run_id=run_id,
+        disease=Disease.DENGUE,
+        coverage=Coverage.BR,
+        epiweek=Epiweek.parse(202639),
+        fingerprint='source',
+        completed_at=COMPLETED_AT,
+    )
+    first = IngestionCompleted.new(**kwargs)
+    assert first == IngestionCompleted.new(**kwargs)
+    assert first.completed_at == COMPLETED_AT
+    assert (
+        first.event_id
+        != IngestionCompleted.new(**{**kwargs, 'run_id': uuid4()}).event_id
+    )
+    with pytest.raises(TypeError):
+        IngestionCompleted.new(
+            **{
+                key: value
+                for key, value in kwargs.items()
+                if key != 'completed_at'
+            }
+        )
+    with pytest.raises(ValidationError):
+        IngestionCompleted.new(
+            **{**kwargs, 'completed_at': datetime(2026, 10, 14)}
+        )
+
+
+@pytest.mark.parametrize('fingerprint', ['', '   ', 'x' * 129])
+def test_event_rejects_invalid_fingerprint(fingerprint: str) -> None:
+    """The event identity fits the persisted fingerprint capacity."""
+    with pytest.raises(ValidationError):
+        IngestionCompleted.new(
+            run_id=uuid4(),
+            disease=Disease.DENGUE,
+            coverage=Coverage.BR,
+            epiweek=Epiweek.parse(202639),
+            fingerprint=fingerprint,
+            completed_at=COMPLETED_AT,
+        )
+
+
+def test_input_order_is_monotonic_and_equal_times_converge() -> None:
+    """Late delivery and duplicates preserve the newest disease input."""
+    week = Epiweek.parse(202639)
+    older = ingestion_input('older')
+    newer = ingestion_input('newer', seconds=1)
+    first = Readiness(Coverage.BR, week).with_input(Disease.DENGUE, older)
+    assert first.inputs[Disease.DENGUE] == older
+    latest = first.with_input(Disease.DENGUE, newer)
+    assert latest.inputs[Disease.DENGUE] == newer
+    assert latest.with_input(Disease.DENGUE, older) is latest
+    assert latest.with_input(Disease.DENGUE, newer) is latest
+    tied = IngestionInput(uuid4(), 'tie', newer.completed_at)
+    forward = latest.with_input(Disease.DENGUE, tied)
+    reverse = (
+        Readiness(Coverage.BR, week)
+        .with_input(Disease.DENGUE, tied)
+        .with_input(Disease.DENGUE, newer)
+    )
+    assert forward.inputs == reverse.inputs
+    assert forward.inputs[Disease.DENGUE].run_id.int == max(
+        newer.run_id.int, tied.run_id.int
+    )
+    with pytest.raises(ValueError, match='timezone aware'):
+        IngestionInput(uuid4(), 'bad', datetime(2026, 10, 14))
+
+
 def test_readiness_fingerprint_changes_with_inputs() -> None:
     """The identity includes every available input and its disease code."""
     week = Epiweek.parse(202639)
-    dengue = IngestionInput(uuid4(), 'd')
-    chik = IngestionInput(uuid4(), 'c')
+    dengue = ingestion_input('d')
+    chik = ingestion_input('c')
     waiting = Readiness(Coverage.BR, week).with_input(Disease.DENGUE, dengue)
     assert not waiting.ready
     assert waiting.input_fingerprint is None
@@ -142,7 +223,7 @@ def test_readiness_fingerprint_changes_with_inputs() -> None:
         .with_input(Disease.CHIKUNGUNYA, chik)
     )
     assert ready.input_fingerprint == repeated.input_fingerprint
-    changed = ready.with_input(Disease.DENGUE, IngestionInput(uuid4(), 'd'))
+    changed = ready.with_input(Disease.DENGUE, ingestion_input('d', seconds=1))
     assert changed.input_fingerprint != ready.input_fingerprint
 
 
@@ -150,9 +231,9 @@ def test_readiness_fingerprint_is_deterministic_for_arrival_order() -> None:
     """Arrival order cannot alter a fingerprint for the same inputs."""
     week = Epiweek.parse(202639)
     inputs = {
-        Disease.DENGUE: IngestionInput(uuid4(), 'd'),
-        Disease.CHIKUNGUNYA: IngestionInput(uuid4(), 'c'),
-        Disease.ZIKA: IngestionInput(uuid4(), 'z'),
+        Disease.DENGUE: ingestion_input('d'),
+        Disease.CHIKUNGUNYA: ingestion_input('c'),
+        Disease.ZIKA: ingestion_input('z'),
     }
     forward = Readiness(Coverage.BR, week)
     reverse = Readiness(Coverage.BR, week)
@@ -168,17 +249,13 @@ def test_optional_zika_changes_analysis_input_fingerprint() -> None:
     """Optional Zika participates when available to the analysis job."""
     week = Epiweek.parse(202639)
     readiness = Readiness(Coverage.BR, week).with_input(
-        Disease.DENGUE, IngestionInput(uuid4(), 'd')
+        Disease.DENGUE, ingestion_input('d')
     )
-    readiness = readiness.with_input(
-        Disease.CHIKUNGUNYA, IngestionInput(uuid4(), 'c')
-    )
+    readiness = readiness.with_input(Disease.CHIKUNGUNYA, ingestion_input('c'))
     baseline = readiness.input_fingerprint
-    with_zika = readiness.with_input(
-        Disease.ZIKA, IngestionInput(uuid4(), 'z')
-    )
+    with_zika = readiness.with_input(Disease.ZIKA, ingestion_input('z'))
     changed_zika = with_zika.with_input(
-        Disease.ZIKA, IngestionInput(uuid4(), 'z2')
+        Disease.ZIKA, ingestion_input('z2', seconds=1)
     )
     assert baseline is not None
     assert with_zika.input_fingerprint != baseline
@@ -216,7 +293,7 @@ def test_coverage_validates_finite_delivery_scope() -> None:
 def test_state_readiness_and_optional_chik_change_hash() -> None:
     """State dengue is ready; later optional chik changes analysis identity."""
     week = Epiweek.parse(202639)
-    dengue = IngestionInput(uuid4(), 'd')
+    dengue = ingestion_input('d')
     ready = Readiness(
         Coverage.MG,
         week,
@@ -225,9 +302,7 @@ def test_state_readiness_and_optional_chik_change_hash() -> None:
     )
     assert ready.ready
     before = ready.input_fingerprint
-    with_chik = ready.with_input(
-        Disease.CHIKUNGUNYA, IngestionInput(uuid4(), 'c')
-    )
+    with_chik = ready.with_input(Disease.CHIKUNGUNYA, ingestion_input('c'))
     assert with_chik.input_fingerprint != before
 
 
@@ -245,7 +320,7 @@ def test_default_readiness_policy_depends_on_coverage() -> None:
 def test_fingerprint_includes_coverage() -> None:
     """Identical national and state deliveries have distinct hashes."""
     week = Epiweek.parse(202639)
-    inputs = {Disease.DENGUE: IngestionInput(uuid4(), 'same')}
+    inputs = {Disease.DENGUE: ingestion_input('same')}
     national = Readiness(
         Coverage.BR, week, inputs, frozenset({Disease.DENGUE})
     )

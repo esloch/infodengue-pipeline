@@ -1,5 +1,6 @@
 """RabbitMQ event publication adapter tests."""
 
+from datetime import datetime, timezone
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ def test_celery_event_publisher_sends_event_to_events_queue() -> None:
         coverage=Coverage.BR,
         epiweek=Epiweek.parse(202639),
         fingerprint='validation-test',
+        completed_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
     )
 
     CeleryEventPublisher(app).publish(event)

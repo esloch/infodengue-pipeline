@@ -41,6 +41,7 @@ def completed_event():
         coverage: Coverage = Coverage.BR,
         week: int = 202639,
         fingerprint: str = 'source-sha256',
+        completed_at: datetime | None = None,
     ) -> IngestionCompleted:
         return IngestionCompleted(
             event_id=uuid4(),
@@ -49,7 +50,7 @@ def completed_event():
             coverage=coverage,
             epiweek=week,
             fingerprint=fingerprint,
-            completed_at=datetime.now(timezone.utc),
+            completed_at=completed_at or datetime.now(timezone.utc),
         )
 
     return build

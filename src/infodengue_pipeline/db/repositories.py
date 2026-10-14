@@ -59,7 +59,11 @@ class SqlWorkflowRepository:
             return None
         inputs = {
             input_row.disease: IngestionInput(
-                input_row.run_id, input_row.fingerprint
+                input_row.run_id,
+                input_row.fingerprint,
+                input_row.completed_at.replace(tzinfo=timezone.utc)
+                if input_row.completed_at.tzinfo is None
+                else input_row.completed_at.astimezone(timezone.utc),
             )
             for input_row in row.inputs
         }
@@ -93,11 +97,13 @@ class SqlWorkflowRepository:
                         disease=disease,
                         run_id=incoming.run_id,
                         fingerprint=incoming.fingerprint,
+                        completed_at=incoming.completed_at,
                     )
                 )
             else:
                 existing_item.run_id = incoming.run_id
                 existing_item.fingerprint = incoming.fingerprint
+                existing_item.completed_at = incoming.completed_at
         row.status = workflow.status
         row.queued_fingerprint = workflow.queued_fingerprint
 

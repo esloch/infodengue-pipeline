@@ -126,6 +126,9 @@ class WorkflowInputRow(Base):
     )
     run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     workflow: Mapped[WorkflowRow] = relationship(back_populates='inputs')
 
 

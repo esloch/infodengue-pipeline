@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from datetime import datetime, timezone
 from io import BytesIO
 from uuid import uuid4
 
@@ -85,6 +86,7 @@ def main() -> None:
             coverage=Coverage.BR,
             epiweek=week,
             fingerprint=f'dev-validation-{disease.value}',
+            completed_at=datetime.now(timezone.utc),
         )
         publisher.publish(event)
 

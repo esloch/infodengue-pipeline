@@ -57,6 +57,7 @@ def upgrade() -> None:
         sa.Column('disease', sa.String(8), nullable=False),
         sa.Column('run_id', sa.Uuid(), nullable=False),
         sa.Column('fingerprint', sa.String(128), nullable=False),
+        sa.Column('completed_at', sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint(
             'workflow_id', 'disease', name='uq_workflow_input_disease'
         ),

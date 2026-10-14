@@ -1,5 +1,6 @@
 """Repository and application transactions against isolated SQL state."""
 
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -204,6 +205,7 @@ def test_workflow_input_rejects_duplicate_disease(
                     disease=Disease.ZIKA,
                     run_id=uuid4(),
                     fingerprint=f'fingerprint-{index}',
+                    completed_at=datetime.now(timezone.utc),
                 )
                 for index in range(2)
             ]
@@ -245,11 +247,45 @@ def test_new_input_fingerprint_reopens_readiness(
             'event_id': uuid4(),
             'run_id': uuid4(),
             'fingerprint': 'new-source',
+            'completed_at': dengue.completed_at + timedelta(seconds=1),
         }
     )
     updated = coordinator.record(changed)
     assert updated.status is WorkflowStatus.READY
     assert updated.readiness.input_fingerprint != first.queued_fingerprint
+
+
+def test_stale_event_does_not_reopen_queued_or_regress_ready(
+    work_factory, completed_event
+) -> None:
+    """Delayed older inputs cannot replace a newer queued or ready input."""
+    coordinator = CoordinateEpiweek(work_factory)
+    old = completed_event(
+        Disease.DENGUE,
+        completed_at=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+    chik = completed_event(
+        Disease.CHIKUNGUNYA,
+        completed_at=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+    coordinator.record(old)
+    coordinator.record(chik)
+    first = coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639))
+    assert first is not None
+    new = completed_event(
+        Disease.DENGUE,
+        fingerprint='new',
+        completed_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
+    )
+    ready = coordinator.record(new)
+    assert ready.status is WorkflowStatus.READY
+    assert coordinator.record(old).readiness == ready.readiness
+    second = coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639))
+    assert second is not None
+    stale = coordinator.record(old)
+    assert stale.status is WorkflowStatus.QUEUED
+    assert stale.queued_fingerprint == second.queued_fingerprint
+    assert stale.readiness.inputs[Disease.DENGUE].run_id == new.run_id
 
 
 def test_coverage_and_epiweek_form_distinct_workflow_identity(

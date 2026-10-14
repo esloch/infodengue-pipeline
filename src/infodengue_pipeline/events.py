@@ -1,8 +1,8 @@
 """Versioned ingestion event contract."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal, Self
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -35,9 +35,11 @@ class IngestionCompleted(BaseModel):
     @field_validator('fingerprint')
     @classmethod
     def validate_fingerprint(cls, value: str) -> str:
-        """Require a nonempty immutable input identity."""
-        if not value.strip():
-            raise ValueError('fingerprint must not be empty')
+        """Require an input identity that fits the persisted column."""
+        if not value.strip() or len(value) > 128:
+            raise ValueError(
+                'fingerprint must contain 1 to 128 nonblank characters'
+            )
         return value
 
     @field_validator('completed_at')
@@ -57,14 +59,18 @@ class IngestionCompleted(BaseModel):
         coverage: Coverage,
         epiweek: Epiweek,
         fingerprint: str,
+        completed_at: datetime,
     ) -> Self:
-        """Create a new event at the successful transaction boundary."""
+        """Create a stable event for a completed ingestion run."""
         return cls(
-            event_id=uuid4(),
+            event_id=uuid5(
+                NAMESPACE_OID,
+                f'infodengue:sinan.ingestion.completed:v1:{run_id}',
+            ),
             run_id=run_id,
             disease=disease,
             coverage=coverage,
             epiweek=int(epiweek),
             fingerprint=fingerprint,
-            completed_at=datetime.now(timezone.utc),
+            completed_at=completed_at,
         )
