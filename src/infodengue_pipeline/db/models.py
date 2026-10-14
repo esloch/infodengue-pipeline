@@ -56,7 +56,6 @@ class WorkflowRow(Base):
         UniqueConstraint(
             'coverage', 'epiweek', name='uq_workflow_coverage_epiweek'
         ),
-        Index('ix_pipeline_workflow_coverage_epiweek', 'coverage', 'epiweek'),
         {'schema': 'pipeline'},
     )
 

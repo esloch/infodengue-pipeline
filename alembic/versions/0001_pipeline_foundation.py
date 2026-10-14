@@ -62,12 +62,6 @@ def upgrade() -> None:
         ),
         schema='pipeline',
     )
-    op.create_index(
-        'ix_pipeline_workflow_coverage_epiweek',
-        'workflow',
-        ['coverage', 'epiweek'],
-        schema='pipeline',
-    )
     op.create_table(
         'outbox_event',
         sa.Column('event_id', sa.Uuid(), primary_key=True),
@@ -100,11 +94,6 @@ def downgrade() -> None:
         schema='pipeline',
     )
     op.drop_table('outbox_event', schema='pipeline')
-    op.drop_index(
-        'ix_pipeline_workflow_coverage_epiweek',
-        table_name='workflow',
-        schema='pipeline',
-    )
     op.drop_table('workflow_input', schema='pipeline')
     op.drop_table('workflow', schema='pipeline')
     op.execute('DROP SCHEMA pipeline')

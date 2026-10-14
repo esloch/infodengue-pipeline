@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from infodengue_pipeline.config import Settings
+from infodengue_pipeline.db.models import WorkflowRow
 from infodengue_pipeline.events import IngestionCompleted
 from infodengue_pipeline.models import (
     Coverage,
@@ -18,6 +19,17 @@ from infodengue_pipeline.models import (
 )
 from infodengue_pipeline.protocols import AnalysisJobRequest
 from pydantic import ValidationError
+
+
+def test_workflow_identity_uses_unique_index_only() -> None:
+    """The unique coverage/week constraint supplies the lookup index."""
+    table = WorkflowRow.__table__
+    assert {constraint.name for constraint in table.constraints} >= {
+        'uq_workflow_coverage_epiweek'
+    }
+    assert {index.name for index in table.indexes}.isdisjoint(
+        {'ix_pipeline_workflow_coverage_epiweek'}
+    )
 
 
 def test_disease_mapping() -> None:
