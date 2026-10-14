@@ -32,22 +32,27 @@ class ObjectStore(Protocol):
 
     def bucket_exists(self) -> bool:
         """Report whether the configured development bucket exists."""
+        ...
 
-    def stat(self, key: str) -> ObjectMetadata:
+    def stat(self, _key: str) -> ObjectMetadata:
         """Fetch metadata for an ingress object."""
+        ...
 
-    def list(self, prefix: str = '') -> list[ObjectMetadata]:
+    def list(self, _prefix: str = '') -> list[ObjectMetadata]:
         """List objects under a prefix."""
+        ...
 
-    def materialize(self, key: str, destination: Path) -> ObjectMetadata:
+    def materialize(self, _key: str, _destination: Path) -> ObjectMetadata:
         """Download an ingress object to a local path."""
+        ...
 
 
 class CanonicalStorage(Protocol):
     """Canonical imported source storage."""
 
-    def destination(self, metadata: SinanMetadata) -> Path:
+    def destination(self, _metadata: SinanMetadata) -> Path:
         """Return a contained canonical destination path."""
+        ...
 
 
 class EventPublisher(Protocol):
@@ -55,6 +60,7 @@ class EventPublisher(Protocol):
 
     def publish(self, event: IngestionCompleted) -> None:
         """Return only after the broker confirms publication."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -74,9 +80,11 @@ class WorkflowRepository(Protocol):
         self, coverage: Coverage, epiweek: Epiweek
     ) -> WorkflowSnapshot | None:
         """Lock and load one coverage and epiweek state."""
+        ...
 
     def save(self, workflow: WorkflowSnapshot) -> None:
         """Insert or update one epiweek state."""
+        ...
 
 
 class OutboxRepository(Protocol):
@@ -84,12 +92,15 @@ class OutboxRepository(Protocol):
 
     def add(self, event: IngestionCompleted) -> bool:
         """Insert once by event identity; return whether inserted."""
+        ...
 
     def pending(self, limit: int) -> list[IngestionCompleted]:
         """Lock pending events for one publisher batch."""
+        ...
 
     def mark_published(self, event_id: UUID) -> None:
         """Mark an event published after broker confirmation."""
+        ...
 
 
 class UnitOfWork(Protocol, AbstractContextManager['UnitOfWork']):
@@ -100,12 +111,15 @@ class UnitOfWork(Protocol, AbstractContextManager['UnitOfWork']):
 
     def __enter__(self) -> Self:
         """Begin or join a transaction."""
+        ...
 
     def commit(self) -> None:
         """Persist all changes atomically."""
+        ...
 
     def rollback(self) -> None:
         """Discard uncommitted changes."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -146,8 +160,9 @@ class AnalysisJobResult:
 class AnalysisRunner(Protocol):
     """Run AlertaDengueAnalise through its external OCI contract."""
 
-    def run(self, request: AnalysisJobRequest) -> AnalysisJobResult:
+    def run(self, _request: AnalysisJobRequest) -> AnalysisJobResult:
         """Execute one finite analysis job."""
+        ...
 
 
 class ArtifactPublisher(Protocol):
@@ -155,6 +170,7 @@ class ArtifactPublisher(Protocol):
 
     def publish(self, _result: AnalysisJobResult) -> None:
         """Publish artifacts after validation."""
+        ...
 
 
 class RuntimeRefresher(Protocol):
@@ -162,3 +178,4 @@ class RuntimeRefresher(Protocol):
 
     def refresh(self, epiweek: Epiweek) -> None:
         """Refresh the public runtime after artifact publication."""
+        ...
