@@ -89,7 +89,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 | grep -q pong
+        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 --destination=worker-ingestion@$$(hostname) | grep -q pong
       interval: 15s
       timeout: 8s
       retries: 5
@@ -121,7 +121,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 | grep -q pong
+        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 --destination=worker-events@$$(hostname) | grep -q pong
       interval: 15s
       timeout: 8s
       retries: 5
@@ -150,7 +150,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 | grep -q pong
+        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 --destination=worker-orchestration@$$(hostname) | grep -q pong
       interval: 15s
       timeout: 8s
       retries: 5

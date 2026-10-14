@@ -30,7 +30,7 @@ class Settings(BaseSettings):
         'pipeline_dev'
     )
     rabbitmq_url: SecretStr = SecretStr(
-        'amqp://pipeline_dev:pipeline_dev@localhost:5673//'
+        'amqp://pipeline_dev:pipeline_dev_only@localhost:5673//'
     )
     minio_endpoint: str = 'localhost:9002'
     minio_access_key: SecretStr = SecretStr('pipeline_dev')

@@ -92,6 +92,15 @@ def test_default_database_url_matches_development_compose(monkeypatch) -> None:
     )
 
 
+def test_default_rabbitmq_url_matches_development_compose(monkeypatch) -> None:
+    """The default broker credentials match the local Compose service."""
+    monkeypatch.delenv('INFODENGUE_PIPELINE_RABBITMQ_URL', raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.rabbitmq_url.get_secret_value() == (
+        'amqp://pipeline_dev:pipeline_dev_only@localhost:5673//'
+    )
+
+
 @pytest.mark.parametrize('value', [202600, 202654, '20261', '2026AA'])
 def test_invalid_epiweek(value: int | str) -> None:
     """Malformed and impossible weeks cannot enter domain state."""
