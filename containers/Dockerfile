@@ -20,7 +20,11 @@ COPY alembic ./alembic
 COPY src ./src
 RUN uv sync --frozen --extra dev
 
-RUN useradd --create-home --uid 10001 pipeline \
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+
+RUN groupadd --gid "${HOST_GID}" pipeline \
+    && useradd --create-home --uid "${HOST_UID}" --gid "${HOST_GID}" pipeline \
     && mkdir -p /var/lib/pipeline/incoming /var/lib/pipeline/canonical \
     && chown -R pipeline:pipeline /app /var/lib/pipeline
 
