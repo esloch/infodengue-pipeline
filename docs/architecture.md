@@ -41,10 +41,12 @@ later optional input creates a distinct analysis identity.
 ## Events and state
 
 The `IngestionCompleted` v1 event carries run ID, disease, coverage, epiweek,
-fingerprint, and completion time. It is recorded in a PostgreSQL outbox in the
-same transaction as pipeline state, then published through RabbitMQ/Celery.
-The unique workflow key is `(coverage, epiweek)`; each disease has one current
-input per workflow.
+fingerprint, and completion time. The producer records it in a PostgreSQL
+outbox and commits. A publisher then sends pending events through RabbitMQ and
+Celery with at-least-once delivery. The consumer updates workflow state in a
+separate transaction. Deterministic event identity and monotonic input ordering
+tolerate duplicate and out-of-order delivery. The unique workflow key is
+`(coverage, epiweek)`; each disease has one current input per workflow.
 
 ## External jobs
 
