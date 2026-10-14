@@ -49,14 +49,14 @@ from infodengue_pipeline.storage.minio import (
         ),
     ],
 )
-def test_canonical_destination(
+def test_canonical_base_destination(
     tmp_path: Path,
     coverage: Coverage,
     disease: Disease,
     file_format: FileFormat,
     expected: str,
 ) -> None:
-    """Canonical names and paths follow validated metadata."""
+    """Canonical base names and paths follow validated metadata."""
     storage = FilesystemCanonicalStorage(tmp_path)
     metadata = SinanMetadata(
         disease,
@@ -65,7 +65,7 @@ def test_canonical_destination(
         file_format,
         'anything.dbf',
     )
-    destination = storage.destination(metadata)
+    destination = storage.base_destination(metadata)
     assert destination == tmp_path / expected
     assert destination.is_relative_to(tmp_path)
 
@@ -96,8 +96,12 @@ def test_arbitrary_source_name_does_not_change_destination(
         FileFormat.DBF,
         '../../outside.dbf',
     )
-    assert storage.destination(metadata) == storage.destination(other)
-    assert storage.destination(metadata) == storage.destination(traversal_name)
+    assert storage.base_destination(metadata) == storage.base_destination(
+        other
+    )
+    assert storage.base_destination(metadata) == storage.base_destination(
+        traversal_name
+    )
 
 
 @pytest.mark.parametrize('coverage', ['../MG', 'br', 'XX'])

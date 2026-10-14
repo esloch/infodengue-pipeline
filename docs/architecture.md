@@ -29,6 +29,9 @@ reference. `source_name` is provenance only.
 codes. National workflow identity is `BR + epiweek`; state identity is `UF +
 epiweek`. Canonical paths and filenames are derived from normalized metadata,
 for example `mg/dbf/dengue/2024/202452/DenInfodengue_MG_202452.dbf`.
+The filesystem adapter returns this deterministic base path before checksum
+deduplication or numbered collision resolution. Zika uses a distinct `zika`
+directory in the new model; legacy A92-family routing needs migration work.
 
 National readiness requires dengue (A90) and chikungunya (A92.0). State
 readiness requires dengue (A90); chikungunya and Zika (A928) are optional.

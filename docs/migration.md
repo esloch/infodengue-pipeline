@@ -20,7 +20,17 @@ remains authoritative.
 The workflow key is `(coverage, epiweek)`. `BR` is national and expects dengue
 (A90) plus chikungunya (A92.0); a state UF expects dengue (A90), with chik and
 Zika optional. State and national files for the same week never combine.
-Canonical path compatibility follows the existing mover naming convention.
+The canonical storage API returns only the deterministic `base_destination`.
+Final placement in the ingestion migration must implement checksum deduplication,
+numbered collision versions (`_01`, `_02`, ...), include-existing recovery,
+requeue behavior, epiweek-window/outdated policy, `allow-outdated`, manifest
+metadata, and host/worker path translation.
+
+A90 dengue and A92.0 chikungunya base routing align with the legacy mover.
+The new model intentionally preserves A928 Zika as a separate disease and
+routes it to `zika`. The current legacy mover routes A92.8/A928 through its
+A92 family and can place it in `chik`. This migration divergence requires an
+explicit parity and correction step before ownership moves.
 
 The current AlertaDengue stage/merge and rollback are production-validated
 behavior. This repository has not implemented a staging E2E runtime or a

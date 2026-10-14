@@ -98,7 +98,7 @@ def run_validation(root: Path) -> None:
                 FileFormat.CSV,
                 f'arbitrary-{disease.value}.csv',
             )
-            destination = storage.destination(metadata)
+            destination = storage.base_destination(metadata)
             if not destination.is_relative_to(root):
                 raise RuntimeError(
                     'canonical destination escapes validation root'

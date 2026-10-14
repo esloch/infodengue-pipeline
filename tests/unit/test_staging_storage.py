@@ -60,13 +60,13 @@ def test_accepts_explicit_local_staging_validation_root(
     assert validation_root(_environment(root)) == root.resolve()
 
 
-def test_canonical_destinations_cover_all_diseases(
+def test_canonical_base_destinations_cover_all_diseases(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """All three canonical disease destinations stay under the root."""
     root = _valid_root(tmp_path)
     destinations: list[Path] = []
-    original = FilesystemCanonicalStorage.destination
+    original = FilesystemCanonicalStorage.base_destination
 
     def capture(
         self: FilesystemCanonicalStorage, metadata: SinanMetadata
@@ -75,7 +75,9 @@ def test_canonical_destinations_cover_all_diseases(
         destinations.append(path)
         return path
 
-    monkeypatch.setattr(FilesystemCanonicalStorage, 'destination', capture)
+    monkeypatch.setattr(
+        FilesystemCanonicalStorage, 'base_destination', capture
+    )
     run_validation(root)
     assert [path.name for path in destinations] == [
         'DenInfodengue_BR_202639.csv',

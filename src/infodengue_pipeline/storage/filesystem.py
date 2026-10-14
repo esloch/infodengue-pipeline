@@ -11,8 +11,8 @@ class FilesystemCanonicalStorage:
     def __init__(self, root: Path) -> None:
         self._root = root.resolve()
 
-    def destination(self, metadata: SinanMetadata) -> Path:
-        """Validate and return a contained canonical destination."""
+    def base_destination(self, metadata: SinanMetadata) -> Path:
+        """Return the deterministic base path before collision resolution."""
         coverage = metadata.coverage.value.lower()
         file_type = metadata.file_format.value
         disease = metadata.disease
