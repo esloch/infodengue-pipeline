@@ -1,14 +1,15 @@
-"""Safety checks for the staging filesystem smoke script."""
+"""Safety checks for the staging filesystem validation script."""
 
 from pathlib import Path
 
 import pytest
 
-from infodengue_pipeline.adapters.filesystem.canonical_storage import (
+from infodengue_pipeline.models import SinanMetadata
+from infodengue_pipeline.storage.filesystem import (
     FilesystemCanonicalStorage,
 )
 
-from scripts.smoke_staging_storage import run_smoke, validation_root
+from scripts.validate_staging_storage import run_validation, validation_root
 
 
 def _valid_root(tmp_path: Path) -> Path:
@@ -31,7 +32,7 @@ def test_rejects_non_staging_environment(tmp_path: Path) -> None:
 
 
 def test_rejects_missing_explicit_root() -> None:
-    """The smoke never guesses a filesystem root."""
+    """The validation never guesses a filesystem root."""
     with pytest.raises(RuntimeError, match='CANONICAL_ROOT is required'):
         validation_root({'INFODENGUE_PIPELINE_ENVIRONMENT': 'staging'})
 
@@ -67,13 +68,15 @@ def test_canonical_destinations_cover_all_diseases(
     destinations: list[Path] = []
     original = FilesystemCanonicalStorage.destination
 
-    def capture(self: FilesystemCanonicalStorage, **kwargs: object) -> Path:
-        path = original(self, **kwargs)  # type: ignore[arg-type]
+    def capture(
+        self: FilesystemCanonicalStorage, metadata: SinanMetadata
+    ) -> Path:
+        path = original(self, metadata)
         destinations.append(path)
         return path
 
     monkeypatch.setattr(FilesystemCanonicalStorage, 'destination', capture)
-    run_smoke(root)
+    run_validation(root)
     assert [path.name for path in destinations] == [
         'DenInfodengue_BR_202639.csv',
         'ChikInfodengue_BR_202639.csv',
@@ -95,11 +98,11 @@ def test_containment_rejects_symlinked_parent(tmp_path: Path) -> None:
     outside.mkdir()
     (root / 'br').symlink_to(outside, target_is_directory=True)
     with pytest.raises((RuntimeError, ValueError), match=r'escapes|outside'):
-        run_smoke(root)
+        run_validation(root)
     assert not list(outside.iterdir())
 
 
-def test_cleanup_removes_only_smoke_owned_files(tmp_path: Path) -> None:
+def test_cleanup_removes_only_validation_owned_files(tmp_path: Path) -> None:
     """Cleanup preserves unrelated files and the validation root."""
     root = _valid_root(tmp_path)
     root.mkdir(parents=True)
@@ -107,7 +110,7 @@ def test_cleanup_removes_only_smoke_owned_files(tmp_path: Path) -> None:
     unrelated_dir.mkdir()
     unrelated = unrelated_dir / 'unrelated.csv'
     unrelated.write_bytes(b'preserve me')
-    run_smoke(root)
+    run_validation(root)
     assert unrelated.read_bytes() == b'preserve me'
     assert unrelated_dir.is_dir()
     assert root.is_dir()

@@ -7,11 +7,14 @@ import os
 
 from pathlib import Path
 
-from infodengue_pipeline.adapters.filesystem.canonical_storage import (
-    FilesystemCanonicalStorage,
+from infodengue_pipeline.models import (
+    Coverage,
+    Disease,
+    Epiweek,
+    FileFormat,
+    SinanMetadata,
 )
-from infodengue_pipeline.domain.disease import Disease
-from infodengue_pipeline.domain.epiweek import Epiweek
+from infodengue_pipeline.storage.filesystem import FilesystemCanonicalStorage
 
 _VALIDATION_SUFFIX = Path('staging-data/sinan/pipeline-validation')
 _REFUSED_ROOTS = (
@@ -23,12 +26,12 @@ _REFUSED_ROOTS = (
     Path('/mnt/storagebox-staging/sinan/imported'),
 )
 _FIXTURES = (
-    (Disease.DENGUE, b'NU_NOTIFIC,ID_AGRAVO,SEM_NOT\nsmoke,A90,202639\n'),
+    (Disease.DENGUE, b'NU_NOTIFIC,ID_AGRAVO,SEM_NOT\nvalidation,A90,202639\n'),
     (
         Disease.CHIKUNGUNYA,
-        b'NU_NOTIFIC,ID_AGRAVO,SEM_NOT\nsmoke,A92.0,202639\n',
+        b'NU_NOTIFIC,ID_AGRAVO,SEM_NOT\nvalidation,A92.0,202639\n',
     ),
-    (Disease.ZIKA, b'NU_NOTIFIC,ID_AGRAVO,SEM_NOT\nsmoke,A928,202639\n'),
+    (Disease.ZIKA, b'NU_NOTIFIC,ID_AGRAVO,SEM_NOT\nvalidation,A928,202639\n'),
 )
 
 
@@ -37,7 +40,7 @@ def validation_root(
 ) -> Path:
     """Validate staging environment and return its explicit canonical root."""
     if environ.get('INFODENGUE_PIPELINE_ENVIRONMENT') != 'staging':
-        raise RuntimeError('storage smoke requires environment=staging')
+        raise RuntimeError('storage validation requires environment=staging')
     raw_root = environ.get('INFODENGUE_PIPELINE_CANONICAL_ROOT')
     if not raw_root:
         raise RuntimeError('INFODENGUE_PIPELINE_CANONICAL_ROOT is required')
@@ -76,7 +79,7 @@ def _ensure_parent(parent: Path, root: Path, created_dirs: list[Path]) -> None:
         created_dirs.append(directory)
 
 
-def run_smoke(root: Path) -> None:
+def run_validation(root: Path) -> None:
     """Write, verify, and clean up tiny canonical CSV fixtures."""
     root.mkdir(parents=True, exist_ok=True)
     root = root.resolve()
@@ -88,14 +91,14 @@ def run_smoke(root: Path) -> None:
     created_dirs: list[Path] = []
     try:
         for disease, body in _FIXTURES:
-            filename = f'{disease.filename_prefix}_BR_{week}.csv'
-            destination = storage.destination(
-                country='br',
-                file_type='csv',
-                disease=disease,
-                epiweek=week,
-                filename=filename,
+            metadata = SinanMetadata(
+                disease,
+                Coverage.BR,
+                week,
+                FileFormat.CSV,
+                f'arbitrary-{disease.value}.csv',
             )
+            destination = storage.destination(metadata)
             if not destination.is_relative_to(root):
                 raise RuntimeError(
                     'canonical destination escapes validation root'
@@ -141,8 +144,8 @@ def run_smoke(root: Path) -> None:
 
 def main() -> None:
     """Run the staging filesystem validation using the explicit root."""
-    run_smoke(validation_root())
-    print('staging filesystem smoke passed (local filesystem only)')
+    run_validation(validation_root())
+    print('staging filesystem validation passed (local filesystem only)')
 
 
 if __name__ == '__main__':

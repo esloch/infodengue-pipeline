@@ -46,16 +46,16 @@ groups:
 
   dev:
     tasks:
-      smoke:
-        help: Run the development-only service smoke test
+      validate:
+        help: Run the development-only service validation test
         run: >-
           env INFODENGUE_PIPELINE_DATABASE_URL=postgresql+psycopg://pipeline_dev:pipeline_dev_only@localhost:5434/pipeline_dev
           INFODENGUE_PIPELINE_RABBITMQ_URL=amqp://pipeline_dev:pipeline_dev_only@localhost:5673//
           INFODENGUE_PIPELINE_MINIO_ENDPOINT=localhost:9002
-          python scripts/smoke_dev.py
+          python scripts/validate_dev.py
 
   staging:
     tasks:
-      storage-smoke:
+      validate-storage:
         help: Validate canonical storage on the staging server's local filesystem
-        run: python scripts/smoke_staging_storage.py
+        run: python scripts/validate_staging_storage.py
