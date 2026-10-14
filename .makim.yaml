@@ -8,6 +8,7 @@ groups:
           ruff check .
           mypy src
           bandit -r src
+          vulture src
 
   tests:
     tasks:
