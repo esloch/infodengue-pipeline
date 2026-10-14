@@ -9,6 +9,7 @@ from infodengue_pipeline.config import Settings
 from infodengue_pipeline.db.models import WorkflowRow
 from infodengue_pipeline.events import IngestionCompleted
 from infodengue_pipeline.models import (
+    AnalysisJobRequest,
     Coverage,
     Disease,
     Epiweek,
@@ -17,7 +18,6 @@ from infodengue_pipeline.models import (
     Readiness,
     SinanMetadata,
 )
-from infodengue_pipeline.protocols import AnalysisJobRequest
 from pydantic import ValidationError
 
 COMPLETED_AT = datetime(2026, 10, 14, tzinfo=timezone.utc)

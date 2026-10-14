@@ -11,8 +11,7 @@ from infodengue_pipeline.analysis.runner import (
 )
 from infodengue_pipeline.db import engine as db_engine
 from infodengue_pipeline.logging import configure_logging
-from infodengue_pipeline.models import Coverage, Epiweek
-from infodengue_pipeline.protocols import AnalysisJobRequest
+from infodengue_pipeline.models import AnalysisJobRequest, Coverage, Epiweek
 from sqlalchemy import text
 
 

@@ -59,8 +59,8 @@ def test_models_and_services_do_not_import_concrete_infrastructure() -> None:
                     }
 
 
-def test_ports_are_protocols() -> None:
-    """Scientific jobs and ingress are exposed through replaceable ports."""
+def test_infrastructure_boundaries_are_protocols() -> None:
+    """Scientific jobs and ingress have explicit infrastructure contracts."""
     assert getattr(AnalysisRunner, '_is_protocol', False)
     assert getattr(ObjectStore, '_is_protocol', False)
 

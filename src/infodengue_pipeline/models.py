@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from types import MappingProxyType
 from uuid import UUID
 
@@ -187,6 +188,17 @@ class IngestionInput:
 
 
 @dataclass(frozen=True)
+class ObjectMetadata:
+    """Object metadata without a MinIO SDK dependency."""
+
+    bucket: str
+    key: str
+    size: int
+    etag: str
+    version_id: str | None = None
+
+
+@dataclass(frozen=True)
 class Readiness:
     """Inputs seen for one coverage and epiweek."""
 
@@ -272,3 +284,48 @@ class Readiness:
                 )
             )
         return hashlib.sha256('\x00'.join(parts).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class WorkflowSnapshot:
+    """Persisted coordination state for one coverage and epiweek."""
+
+    workflow_id: UUID
+    readiness: Readiness
+    status: WorkflowStatus
+    queued_fingerprint: str | None = None
+
+
+@dataclass(frozen=True)
+class AnalysisJobRequest:
+    """Validated parameters for a future finite scientific OCI job."""
+
+    job_id: UUID
+    coverage: Coverage
+    epiweek: Epiweek
+    input_fingerprint: str
+    cores: int = 1
+    load: bool = True
+
+    def __post_init__(self) -> None:
+        """Reject unsupported or unsafe job arguments."""
+        if not self.input_fingerprint:
+            raise ValueError('input_fingerprint must not be empty')
+        if self.cores < 1 or self.cores > 64:
+            raise ValueError('cores must be between 1 and 64')
+
+    @property
+    def states(self) -> tuple[str, ...]:
+        """Derive the analysis scope from delivery coverage."""
+        return (
+            ('ALL',) if self.coverage.is_national else (self.coverage.value,)
+        )
+
+
+@dataclass(frozen=True)
+class AnalysisJobResult:
+    """Finite scientific job outcome and output location."""
+
+    job_id: UUID
+    output_dir: Path
+    succeeded: bool

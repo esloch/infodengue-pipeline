@@ -10,7 +10,7 @@ from minio.commonconfig import ENABLED
 from minio.lifecycleconfig import Expiration, LifecycleConfig, Rule
 
 from infodengue_pipeline.config import Settings
-from infodengue_pipeline.protocols import ObjectMetadata
+from infodengue_pipeline.models import ObjectMetadata
 
 
 class MinioObjectStore:

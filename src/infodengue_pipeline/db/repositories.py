@@ -22,8 +22,8 @@ from infodengue_pipeline.models import (
     Epiweek,
     IngestionInput,
     Readiness,
+    WorkflowSnapshot,
 )
-from infodengue_pipeline.protocols import WorkflowSnapshot
 
 
 class SqlWorkflowRepository:

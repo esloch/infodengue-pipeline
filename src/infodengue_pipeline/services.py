@@ -13,12 +13,12 @@ from infodengue_pipeline.models import (
     Epiweek,
     IngestionInput,
     Readiness,
+    WorkflowSnapshot,
     WorkflowStatus,
 )
 from infodengue_pipeline.protocols import (
     EventPublisher,
     UnitOfWork,
-    WorkflowSnapshot,
 )
 
 
@@ -37,7 +37,7 @@ class RecordIngestionCompletion:
 
 
 class CoordinateEpiweek:
-    """Persist same epiweek readiness without scheduling scientific work."""
+    """Persist coverage and epiweek readiness without scheduling analysis."""
 
     def __init__(
         self,
@@ -64,7 +64,7 @@ class CoordinateEpiweek:
             raise ValueError('required diseases must not be empty')
 
     def record(self, event: IngestionCompleted) -> WorkflowSnapshot:
-        """Apply an ingestion event idempotently to one epiweek."""
+        """Apply an ingestion event to one coverage and epiweek."""
         epiweek = Epiweek.parse(event.epiweek)
         coverage = event.coverage
         with self._unit_of_work() as work:
