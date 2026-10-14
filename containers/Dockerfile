@@ -13,12 +13,12 @@ COPY --from=uv /uv /uvx /usr/local/bin/
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md LICENSE ./
-RUN uv sync --frozen --extra dev --no-install-project
+RUN uv sync --frozen --no-install-project
 
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY src ./src
-RUN uv sync --frozen --extra dev
+RUN uv sync --frozen
 
 ARG HOST_UID=1000
 ARG HOST_GID=1000
