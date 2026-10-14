@@ -1,40 +1,72 @@
 # Architecture
 
-InfodenguePipeline is a standalone ingestion and workflow coordination service.
-It owns ingestion state and future workflow coordination. It does not own the
-public web application or scientific calculations.
+## Ownership boundaries
 
 ```text
-MinIO transient ingress → ingestion → StorageBox canonical files
-                                  ↓
-                         PostgreSQL processed state
-                                  ↓ events
-                finite AlertaDengueAnalise OCI job
-                                  ↓ validated artifacts
-                   AlertaDengue runtime refresh
+MinIO transient ingress → incoming → watcher → mover → manifest → stage → merge
+                                                       AlertaDengue reference
+
+pipeline state + outbox → finite AlertaDengueAnalise OCI job (not implemented)
 ```
 
-MinIO is transient ingress. StorageBox is the canonical imported file source
-of truth. PostgreSQL stores processed data and pipeline state. AlertaDengue
-remains the web/API application. AlertaDengueAnalise remains a finite,
-independently executable scientific job. This repository will own ingestion
-and workflow coordination after a phased migration.
+AlertaDengue owns scientific ingestion behavior and its validated stage, merge,
+and rollback. AlertaDengueAnalise owns scientific computation. This pipeline
+owns workflow identity, readiness, durable events, and future external job
+coordination. Communication uses finite runtime contracts; the pipeline does
+not import R implementation code or provide a plugin framework.
 
-The code uses domain and application modules behind ports. SQLAlchemy,
-RabbitMQ/Celery, MinIO, and filesystem adapters implement infrastructure
-boundaries. Phase 0 provides state and contracts; it does not yet parse or
-merge SINAN data or launch external jobs.
+## SINAN metadata and coverage
 
-Dengue (A90), chikungunya (A92.0), and Zika (A928) are supported domain
-diseases. Zika is currently optional for analysis readiness. The set of
-required diseases comes from configuration rather than workflow table
-structure, so Zika can be made required without a schema redesign. The
-AlertaDengue historical and runtime ecosystem already contains Zika data
-structures; the pipeline preserves that capability and keeps A92.0 distinct
-from A928.
+`SinanMetadata` is the normalized inspection result: `disease`, `coverage`,
+`epiweek`, `file_format`, and `source_name`. It is produced after validating
+the file contents. Incoming filenames are not authoritative. Disease,
+coverage, and epiweek are derived from validated file contents by the ingestion
+inspection layer. This foundation does not implement a SINAN content parser;
+the existing AlertaDengue mover remains the migration compatibility
+reference. `source_name` is provenance only.
 
-# Environment boundary
+`Coverage` is either `BR` for national delivery or one of the supported state
+codes. National workflow identity is `BR + epiweek`; state identity is `UF +
+epiweek`. Canonical paths and filenames are derived from normalized metadata,
+for example `mg/dbf/dengue/2024/202452/DenInfodengue_MG_202452.dbf`.
 
-The Compose stack is development-only, binds published ports to loopback, and
-uses local named volumes. Production endpoints and credentials are not
-configured by this repository's development defaults.
+National readiness requires dengue (A90) and chikungunya (A92.0). State
+readiness requires dengue (A90); chikungunya and Zika (A928) are optional.
+Every available supported input participates in a stable fingerprint, so a
+later optional input creates a distinct analysis identity.
+
+## Events and state
+
+The `IngestionCompleted` v1 event carries run ID, disease, coverage, epiweek,
+fingerprint, and completion time. It is recorded in a PostgreSQL outbox in the
+same transaction as pipeline state, then published through RabbitMQ/Celery.
+The unique workflow key is `(coverage, epiweek)`; each disease has one current
+input per workflow.
+
+## External jobs
+
+`AnalysisRunner` is a small boundary for one finite external analysis job.
+`Coverage.BR` maps to analysis scope `ALL`; a state maps to that UF. The
+foundation uses `DisabledAnalysisRunner`, so no scientific job is launched.
+A future finite Boletim runner can use an explicit contract without changing
+this boundary into a generic job registry.
+
+## Compatibility direction
+
+Current AlertaDengue operational behavior is the reference:
+
+```text
+MinIO → mc mirror --watch → complete local file → incoming directory
+  → watcher → makim ingestion.run → content inspection/mover → canonical file
+  → manifest → enqueue → stage → merge
+```
+
+The sender may use arbitrary names. The mover discovers disease from fields
+such as `ID_AGRAVO`, `CID10`, `CID10_CODIGO`, or `CID10CODIGO`; epiweek from
+`SEM_NOT` variants; and geography from UF fields in the content. It checks
+format-specific candidate fields in priority order and uses a candidate with
+one unambiguous valid UF; if none qualifies, it routes to BR. The legacy tests
+confirm, for example, that CSV prioritizes `SG_UF_NOT` while DBF prioritizes
+`SG_UF`. It generates the canonical path only after inspection. The pipeline
+must preserve these rules during migration without copying the legacy parser
+into this foundation.

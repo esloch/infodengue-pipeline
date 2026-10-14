@@ -1,31 +1,39 @@
 # Operations
 
-Phase 0 operational resources are limited to local development Compose
-services: PostgreSQL, RabbitMQ, MinIO, and three queue-specific Celery workers.
-No worker mounts a Docker socket. Credentials are development placeholders.
+## Phase 0
 
-Phase 0 staging filesystem validation uses the staging server's local ext4
-filesystem at `/opt/services/infodengue-pipeline/staging-data/sinan/pipeline-validation`.
-Run it with an explicit staging environment and canonical root:
+Phase 0 provides development infrastructure and a guarded staging filesystem
+validation only. It does not provide deployable staging E2E, ingestion
+watching, content inspection, stage/merge, production cutover, alerting, or
+analysis execution.
+
+MinIO is transient ingress. The existing AlertaDengue operational chain uses
+`mc mirror --watch` to materialize complete local files in an incoming
+directory before its watcher invokes ingestion. In this foundation, MinIO
+materialization writes a temporary file and exposes it with an atomic rename
+only after download and object identity checks succeed. The adapter does not
+interpret object keys as disease, coverage, or epiweek.
+
+## Local staging filesystem validation
+
+The validation writes tiny temporary CSV fixtures only under the explicit
+`staging-data/sinan/pipeline-validation` root and removes only files it
+created. It does not test the StorageBox canonical destination or establish
+StorageBox parity.
 
 ```sh
 INFODENGUE_PIPELINE_ENVIRONMENT=staging \
 INFODENGUE_PIPELINE_CANONICAL_ROOT=/opt/services/infodengue-pipeline/staging-data/sinan/pipeline-validation \
-uv run makim staging.storage-smoke
+uv run makim staging.validate-storage
 ```
 
-This validates local ext4 storage only. It is not a Hetzner StorageBox
-validation and does not establish StorageBox parity.
+Do not point this command at production, StorageBox, or an operational SINAN
+directory. The code has explicit path guards and refuses other roots.
 
-Production operation, alerting, backups, retries, and cutover procedures are
-not yet implemented. When a scientific job and validated outputs are ready,
-the later pipeline may invoke AlertaDengue's stable runtime refresh contract:
+## Storage distinction
 
-```text
-uv run makim deployment.refresh-runtime --env prod --week YYYYWW
-```
-
-That operation is documented only and is not invoked by this repository in
-Phase 0. It must run after scientific job success, output validation, and
-artifact publication. Cache invalidation and public verification remain owned
-by the external runtime contract.
+The production historical/current AlertaDengue canonical storage contract is
+the imported SINAN tree on StorageBox. Phase 0 validation uses a local
+filesystem path solely to exercise deterministic path construction,
+containment, and write/readback behavior. StorageBox parity has not been
+validated by this repository.
