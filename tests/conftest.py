@@ -6,10 +6,10 @@ from uuid import uuid4
 
 import pytest
 
-from infodengue_pipeline.adapters.postgres.models import Base
-from infodengue_pipeline.adapters.postgres.unit_of_work import SqlUnitOfWork
-from infodengue_pipeline.domain.disease import Disease
-from infodengue_pipeline.domain.events import IngestionCompleted
+from infodengue_pipeline.db.engine import SqlUnitOfWork
+from infodengue_pipeline.db.models import Base
+from infodengue_pipeline.events import IngestionCompleted
+from infodengue_pipeline.models import Coverage, Disease
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -38,6 +38,7 @@ def completed_event():
 
     def build(
         disease: Disease = Disease.DENGUE,
+        coverage: Coverage = Coverage.BR,
         week: int = 202639,
         fingerprint: str = 'source-sha256',
     ) -> IngestionCompleted:
@@ -45,6 +46,7 @@ def completed_event():
             event_id=uuid4(),
             run_id=uuid4(),
             disease=disease,
+            coverage=coverage,
             epiweek=week,
             fingerprint=fingerprint,
             completed_at=datetime.now(timezone.utc),

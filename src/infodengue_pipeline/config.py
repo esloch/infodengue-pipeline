@@ -7,8 +7,12 @@ from typing import Annotated, Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from infodengue_pipeline.domain.disease import Disease, disease_from_cid10
-from infodengue_pipeline.domain.workflow import DEFAULT_REQUIRED_DISEASES
+from infodengue_pipeline.models import (
+    DEFAULT_BR_REQUIRED_DISEASES,
+    DEFAULT_UF_REQUIRED_DISEASES,
+    Disease,
+    disease_from_cid10,
+)
 
 
 class Settings(BaseSettings):
@@ -37,13 +41,18 @@ class Settings(BaseSettings):
     canonical_root: Path = Path('.local/canonical')
     analysis_image: str | None = None
     analysis_cores: int = Field(default=1, ge=1, le=64)
-    required_diseases: Annotated[frozenset[Disease], NoDecode] = (
-        DEFAULT_REQUIRED_DISEASES
+    br_required_diseases: Annotated[frozenset[Disease], NoDecode] = (
+        DEFAULT_BR_REQUIRED_DISEASES
+    )
+    uf_required_diseases: Annotated[frozenset[Disease], NoDecode] = (
+        DEFAULT_UF_REQUIRED_DISEASES
     )
 
-    @field_validator('required_diseases', mode='before')
+    @field_validator(
+        'br_required_diseases', 'uf_required_diseases', mode='before'
+    )
     @classmethod
-    def parse_required_diseases(cls, value: object) -> frozenset[Disease]:
+    def parse_required_diseases(_cls, value: object) -> frozenset[Disease]:
         """Parse a comma-separated list of canonical CID-10 codes."""
         if isinstance(value, str) and not value.strip():
             raise ValueError('required_diseases must not be empty')
@@ -70,7 +79,7 @@ class Settings(BaseSettings):
 
     @field_validator('minio_bucket')
     @classmethod
-    def validate_bucket(cls, value: str) -> str:
+    def validate_bucket(_cls, value: str) -> str:
         """Reject empty or path-shaped bucket identifiers."""
         if not value or '/' in value or '..' in value:
             raise ValueError('minio_bucket must be a simple bucket name')

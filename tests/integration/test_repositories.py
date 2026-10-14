@@ -4,22 +4,23 @@ from uuid import uuid4
 
 import pytest
 
-from infodengue_pipeline.adapters.postgres.models import (
+from infodengue_pipeline.db.models import (
     OutboxEventRow,
     OutboxStatus,
     WorkflowInputRow,
     WorkflowRow,
 )
-from infodengue_pipeline.application.services import (
+from infodengue_pipeline.models import (
+    DEFAULT_BR_REQUIRED_DISEASES,
+    Coverage,
+    Disease,
+    Epiweek,
+    WorkflowStatus,
+)
+from infodengue_pipeline.services import (
     CoordinateEpiweek,
     PublishOutbox,
     RecordIngestionCompletion,
-)
-from infodengue_pipeline.domain.disease import Disease
-from infodengue_pipeline.domain.epiweek import Epiweek
-from infodengue_pipeline.domain.workflow import (
-    DEFAULT_REQUIRED_DISEASES,
-    WorkflowStatus,
 )
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -90,14 +91,14 @@ def test_epiweek_readiness_and_idempotent_claim(
     waiting = coordinator.record(dengue)
     assert waiting.status is WorkflowStatus.WAITING
     assert coordinator.record(dengue).status is WorkflowStatus.WAITING
-    assert coordinator.claim_ready(Epiweek.parse(202639)) is None
+    assert coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639)) is None
     ready = coordinator.record(chik)
     assert ready.status is WorkflowStatus.READY
-    claimed = coordinator.claim_ready(Epiweek.parse(202639))
+    claimed = coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639))
     assert claimed is not None
     assert claimed.status is WorkflowStatus.QUEUED
     assert claimed.queued_fingerprint == ready.readiness.input_fingerprint
-    assert coordinator.claim_ready(Epiweek.parse(202639)) is None
+    assert coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639)) is None
     assert coordinator.record(chik).status is WorkflowStatus.QUEUED
     with sessions() as session:
         assert len(session.scalars(select(WorkflowRow)).all()) == 1
@@ -124,12 +125,12 @@ def test_epiweek_readiness_and_idempotent_claim(
         ),
         (
             (Disease.DENGUE, Disease.CHIKUNGUNYA),
-            frozenset((*DEFAULT_REQUIRED_DISEASES, Disease.ZIKA)),
+            frozenset((*DEFAULT_BR_REQUIRED_DISEASES, Disease.ZIKA)),
             WorkflowStatus.WAITING,
         ),
         (
             (Disease.DENGUE, Disease.CHIKUNGUNYA, Disease.ZIKA),
-            frozenset((*DEFAULT_REQUIRED_DISEASES, Disease.ZIKA)),
+            frozenset((*DEFAULT_BR_REQUIRED_DISEASES, Disease.ZIKA)),
             WorkflowStatus.READY,
         ),
     ],
@@ -144,7 +145,7 @@ def test_configurable_disease_readiness(
 ) -> None:
     """Persist all inputs while applying the configured readiness set."""
     kwargs = (
-        {'required_diseases': required_diseases}
+        {'br_required_diseases': required_diseases}
         if required_diseases is not None
         else {}
     )
@@ -189,6 +190,7 @@ def test_workflow_input_rejects_duplicate_disease(
         session.add(
             WorkflowRow(
                 workflow_id=workflow_id,
+                coverage=Coverage.BR,
                 epiweek=202639,
                 status=WorkflowStatus.WAITING,
             )
@@ -224,8 +226,8 @@ def test_different_epiweeks_never_combine(
         ).status
         is WorkflowStatus.WAITING
     )
-    assert coordinator.claim_ready(Epiweek.parse(202639)) is None
-    assert coordinator.claim_ready(Epiweek.parse(202638)) is None
+    assert coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639)) is None
+    assert coordinator.claim_ready(Coverage.BR, Epiweek.parse(202638)) is None
 
 
 def test_new_input_fingerprint_reopens_readiness(
@@ -236,7 +238,7 @@ def test_new_input_fingerprint_reopens_readiness(
     dengue = completed_event(Disease.DENGUE)
     coordinator.record(dengue)
     coordinator.record(completed_event(Disease.CHIKUNGUNYA))
-    first = coordinator.claim_ready(Epiweek.parse(202639))
+    first = coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639))
     assert first is not None
     changed = dengue.model_copy(
         update={
@@ -248,3 +250,48 @@ def test_new_input_fingerprint_reopens_readiness(
     updated = coordinator.record(changed)
     assert updated.status is WorkflowStatus.READY
     assert updated.readiness.input_fingerprint != first.queued_fingerprint
+
+
+def test_coverage_and_epiweek_form_distinct_workflow_identity(
+    sessions: sessionmaker[Session], work_factory, completed_event
+) -> None:
+    """Same week deliveries remain separated by national and state coverage."""
+    coordinator = CoordinateEpiweek(work_factory)
+    mg_dengue = coordinator.record(
+        completed_event(Disease.DENGUE, coverage=Coverage.MG)
+    )
+    br_chik = coordinator.record(
+        completed_event(Disease.CHIKUNGUNYA, coverage=Coverage.BR)
+    )
+    assert mg_dengue.status is WorkflowStatus.READY
+    assert br_chik.status is WorkflowStatus.WAITING
+    assert coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639)) is None
+    with sessions() as session:
+        rows = session.scalars(select(WorkflowRow)).all()
+        assert {(row.coverage, row.epiweek) for row in rows} == {
+            (Coverage.MG, 202639),
+            (Coverage.BR, 202639),
+        }
+
+
+def test_different_ufs_never_combine(work_factory, completed_event) -> None:
+    """MG dengue cannot combine with SP chikungunya."""
+    coordinator = CoordinateEpiweek(work_factory)
+    mg = coordinator.record(
+        completed_event(Disease.DENGUE, coverage=Coverage.MG)
+    )
+    sp = coordinator.record(
+        completed_event(Disease.CHIKUNGUNYA, coverage=Coverage.SP)
+    )
+    assert mg.status is WorkflowStatus.READY
+    assert sp.status is WorkflowStatus.WAITING
+    assert coordinator.claim_ready(Coverage.SP, Epiweek.parse(202639)) is None
+
+
+def test_mg_chikungunya_alone_waits(work_factory, completed_event) -> None:
+    """State chikungunya is optional and cannot satisfy dengue readiness."""
+    coordinator = CoordinateEpiweek(work_factory)
+    state_chik = coordinator.record(
+        completed_event(Disease.CHIKUNGUNYA, coverage=Coverage.MG)
+    )
+    assert state_chik.status is WorkflowStatus.WAITING

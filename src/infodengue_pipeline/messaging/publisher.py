@@ -1,7 +1,8 @@
 """Confirmed Celery publication of versioned domain events."""
 
 from celery import Celery
-from infodengue_pipeline.domain.events import IngestionCompleted
+
+from infodengue_pipeline.events import IngestionCompleted
 
 
 class CeleryEventPublisher:

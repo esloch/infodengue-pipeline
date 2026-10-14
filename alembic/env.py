@@ -2,8 +2,8 @@
 
 from logging.config import fileConfig
 
-from infodengue_pipeline.adapters.postgres.models import Base
 from infodengue_pipeline.config import get_settings
+from infodengue_pipeline.db.models import Base
 from sqlalchemy import create_engine, pool
 
 from alembic import context

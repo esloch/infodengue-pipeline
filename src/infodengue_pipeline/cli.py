@@ -4,10 +4,10 @@ import click
 
 from minio import Minio
 
-from infodengue_pipeline.adapters.minio.lifecycle import (
+from infodengue_pipeline.config import get_settings
+from infodengue_pipeline.storage.minio import (
     configure_development_lifecycle,
 )
-from infodengue_pipeline.config import get_settings
 
 
 @click.group()

@@ -6,11 +6,17 @@ from uuid import uuid4
 import pytest
 
 from infodengue_pipeline.config import Settings
-from infodengue_pipeline.domain.disease import Disease
-from infodengue_pipeline.domain.epiweek import Epiweek
-from infodengue_pipeline.domain.events import IngestionCompleted
-from infodengue_pipeline.domain.workflow import IngestionInput, Readiness
-from infodengue_pipeline.ports.contracts import AnalysisJobRequest
+from infodengue_pipeline.events import IngestionCompleted
+from infodengue_pipeline.models import (
+    Coverage,
+    Disease,
+    Epiweek,
+    FileFormat,
+    IngestionInput,
+    Readiness,
+    SinanMetadata,
+)
+from infodengue_pipeline.protocols import AnalysisJobRequest
 from pydantic import ValidationError
 
 
@@ -33,26 +39,26 @@ def test_disease_mapping() -> None:
 def test_required_disease_configuration(monkeypatch) -> None:
     """Required diseases parse canonical codes and reject invalid sets."""
     monkeypatch.setenv(
-        'INFODENGUE_PIPELINE_REQUIRED_DISEASES', 'A90,A92.0,A928'
+        'INFODENGUE_PIPELINE_BR_REQUIRED_DISEASES', 'A90,A92.0,A928'
     )
     from_env = Settings(_env_file=None)
-    assert from_env.required_diseases == frozenset(Disease)
-    monkeypatch.delenv('INFODENGUE_PIPELINE_REQUIRED_DISEASES')
+    assert from_env.br_required_diseases == frozenset(Disease)
+    monkeypatch.delenv('INFODENGUE_PIPELINE_BR_REQUIRED_DISEASES')
     defaults = Settings(_env_file=None)
-    assert defaults.required_diseases == frozenset(
+    assert defaults.br_required_diseases == frozenset(
         {Disease.DENGUE, Disease.CHIKUNGUNYA}
     )
     settings = Settings(
         _env_file=None,
-        required_diseases='A90,A92.0,A928',
+        br_required_diseases='A90,A92.0,A928',
     )
-    assert settings.required_diseases == frozenset(Disease)
+    assert settings.br_required_diseases == frozenset(Disease)
     with pytest.raises(ValidationError, match='unsupported disease'):
-        Settings(_env_file=None, required_diseases='A90,A92')
+        Settings(_env_file=None, br_required_diseases='A90,A92')
     with pytest.raises(ValidationError, match='duplicate codes'):
-        Settings(_env_file=None, required_diseases='A90,A90')
+        Settings(_env_file=None, br_required_diseases='A90,A90')
     with pytest.raises(ValidationError, match='must not be empty'):
-        Settings(_env_file=None, required_diseases='')
+        Settings(_env_file=None, br_required_diseases='')
 
 
 @pytest.mark.parametrize('value', [202600, 202654, '20261', '2026AA'])
@@ -76,6 +82,7 @@ def test_event_round_trip(completed_event) -> None:
     assert restored == event
     assert restored.event_type == 'sinan.ingestion.completed'
     assert restored.version == 1
+    assert restored.coverage is Coverage.BR
     assert restored.completed_at.utcoffset() is not None
 
 
@@ -101,14 +108,14 @@ def test_readiness_fingerprint_changes_with_inputs() -> None:
     week = Epiweek.parse(202639)
     dengue = IngestionInput(uuid4(), 'd')
     chik = IngestionInput(uuid4(), 'c')
-    waiting = Readiness(week).with_input(Disease.DENGUE, dengue)
+    waiting = Readiness(Coverage.BR, week).with_input(Disease.DENGUE, dengue)
     assert not waiting.ready
     assert waiting.input_fingerprint is None
     ready = waiting.with_input(Disease.CHIKUNGUNYA, chik)
     assert ready.ready
     assert ready.input_fingerprint is not None
     repeated = (
-        Readiness(week)
+        Readiness(Coverage.BR, week)
         .with_input(Disease.DENGUE, dengue)
         .with_input(Disease.CHIKUNGUNYA, chik)
     )
@@ -125,8 +132,8 @@ def test_readiness_fingerprint_is_deterministic_for_arrival_order() -> None:
         Disease.CHIKUNGUNYA: IngestionInput(uuid4(), 'c'),
         Disease.ZIKA: IngestionInput(uuid4(), 'z'),
     }
-    forward = Readiness(week)
-    reverse = Readiness(week)
+    forward = Readiness(Coverage.BR, week)
+    reverse = Readiness(Coverage.BR, week)
     for disease in Disease:
         forward = forward.with_input(disease, inputs[disease])
     for disease in reversed(tuple(Disease)):
@@ -138,7 +145,7 @@ def test_readiness_fingerprint_is_deterministic_for_arrival_order() -> None:
 def test_optional_zika_changes_analysis_input_fingerprint() -> None:
     """Optional Zika participates when available to the analysis job."""
     week = Epiweek.parse(202639)
-    readiness = Readiness(week).with_input(
+    readiness = Readiness(Coverage.BR, week).with_input(
         Disease.DENGUE, IngestionInput(uuid4(), 'd')
     )
     readiness = readiness.with_input(
@@ -156,7 +163,82 @@ def test_optional_zika_changes_analysis_input_fingerprint() -> None:
     assert changed_zika.input_fingerprint != with_zika.input_fingerprint
 
 
-def test_analysis_request_rejects_unsafe_parameters() -> None:
-    """Future OCI execution can only accept bounded typed inputs."""
+def test_analysis_request_rejects_empty_fingerprint() -> None:
+    """Future OCI execution requires a nonempty stable input identity."""
     with pytest.raises(ValueError):
-        AnalysisJobRequest(uuid4(), Epiweek.parse(202639), 'hash', (';rm',), 1)
+        AnalysisJobRequest(uuid4(), Coverage.BR, Epiweek.parse(202639), '')
+
+
+def test_analysis_scope_is_derived_from_coverage() -> None:
+    """National and UF deliveries map to the corresponding analysis scope."""
+    national = AnalysisJobRequest(
+        uuid4(), Coverage.BR, Epiweek.parse(202639), 'hash'
+    )
+    state = AnalysisJobRequest(
+        uuid4(), Coverage.MG, Epiweek.parse(202639), 'hash'
+    )
+    assert national.states == ('ALL',)
+    assert state.states == ('MG',)
+
+
+def test_coverage_validates_finite_delivery_scope() -> None:
+    """Coverage accepts BR and the supported Brazilian state set only."""
+    assert Coverage.BR.is_national
+    assert not Coverage.MG.is_national
+    with pytest.raises(ValueError):
+        Coverage('XX')
+    with pytest.raises(ValueError):
+        Coverage('../MG')
+
+
+def test_state_readiness_and_optional_chik_change_hash() -> None:
+    """State dengue is ready; later optional chik changes analysis identity."""
+    week = Epiweek.parse(202639)
+    dengue = IngestionInput(uuid4(), 'd')
+    ready = Readiness(
+        Coverage.MG,
+        week,
+        {Disease.DENGUE: dengue},
+        frozenset({Disease.DENGUE}),
+    )
+    assert ready.ready
+    before = ready.input_fingerprint
+    with_chik = ready.with_input(
+        Disease.CHIKUNGUNYA, IngestionInput(uuid4(), 'c')
+    )
+    assert with_chik.input_fingerprint != before
+
+
+def test_default_readiness_policy_depends_on_coverage() -> None:
+    """Bare readiness uses dengue plus chik for BR and dengue for a UF."""
+    week = Epiweek.parse(202639)
+    assert Readiness(Coverage.BR, week).required_diseases == frozenset(
+        {Disease.DENGUE, Disease.CHIKUNGUNYA}
+    )
+    assert Readiness(Coverage.MG, week).required_diseases == frozenset(
+        {Disease.DENGUE}
+    )
+
+
+def test_fingerprint_includes_coverage() -> None:
+    """Identical national and state deliveries have distinct hashes."""
+    week = Epiweek.parse(202639)
+    inputs = {Disease.DENGUE: IngestionInput(uuid4(), 'same')}
+    national = Readiness(
+        Coverage.BR, week, inputs, frozenset({Disease.DENGUE})
+    )
+    state = Readiness(Coverage.MG, week, inputs, frozenset({Disease.DENGUE}))
+    assert national.input_fingerprint != state.input_fingerprint
+
+
+def test_sinan_metadata_retains_filename_as_provenance() -> None:
+    """Normalized SINAN facts coexist with an audit-only source name."""
+    metadata = SinanMetadata(
+        Disease.DENGUE,
+        Coverage.MG,
+        Epiweek.parse(202452),
+        FileFormat.DBF,
+        'datos_final.dbf',
+    )
+    assert metadata.source_name == 'datos_final.dbf'
+    assert metadata.coverage is Coverage.MG

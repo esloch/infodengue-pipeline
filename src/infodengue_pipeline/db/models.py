@@ -6,13 +6,12 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from infodengue_pipeline.domain.disease import Disease
-from infodengue_pipeline.domain.workflow import WorkflowStatus
 from sqlalchemy import (
     JSON,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     MetaData,
     String,
@@ -27,6 +26,8 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
 )
+
+from infodengue_pipeline.models import Coverage, Disease, WorkflowStatus
 
 
 class Base(DeclarativeBase):
@@ -52,14 +53,23 @@ class WorkflowRow(Base):
 
     __tablename__ = 'workflow'
     __table_args__ = (
-        UniqueConstraint('epiweek', name='uq_workflow_epiweek'),
+        UniqueConstraint(
+            'coverage', 'epiweek', name='uq_workflow_coverage_epiweek'
+        ),
+        Index('ix_pipeline_workflow_coverage_epiweek', 'coverage', 'epiweek'),
         {'schema': 'pipeline'},
     )
 
     workflow_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=uuid4
     )
-    epiweek: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    coverage: Mapped[Coverage] = mapped_column(
+        Enum(
+            Coverage, values_callable=enum_values, native_enum=False, length=2
+        ),
+        nullable=False,
+    )
+    epiweek: Mapped[int] = mapped_column(Integer, nullable=False)
     inputs: Mapped[list[WorkflowInputRow]] = relationship(
         back_populates='workflow',
         cascade='all, delete-orphan',
@@ -124,7 +134,10 @@ class OutboxEventRow(Base):
     """Domain event persisted in the ingestion transaction."""
 
     __tablename__ = 'outbox_event'
-    __table_args__ = ({'schema': 'pipeline'},)
+    __table_args__ = (
+        Index('ix_pipeline_outbox_status_created', 'status', 'created_at'),
+        {'schema': 'pipeline'},
+    )
 
     event_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True

@@ -4,8 +4,8 @@ import ast
 
 from pathlib import Path
 
-from infodengue_pipeline.adapters.rabbitmq.celery_app import celery_app
-from infodengue_pipeline.ports.contracts import AnalysisRunner, ObjectStore
+from infodengue_pipeline.messaging.celery import celery_app
+from infodengue_pipeline.protocols import AnalysisRunner, ObjectStore
 
 SOURCE = Path(__file__).parents[2] / 'src' / 'infodengue_pipeline'
 
@@ -31,24 +31,32 @@ def test_no_forbidden_framework_or_sibling_paths() -> None:
         assert 'shell=True' not in source, path
 
 
-def test_domain_and_application_dependency_direction() -> None:
-    """Domain and use cases cannot import concrete infrastructure."""
-    for part in ('domain', 'application'):
-        for path in (SOURCE / part).rglob('*.py'):
-            source = path.read_text()
-            tree = ast.parse(source)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom):
-                    module = node.module or ''
-                    assert '.adapters' not in module
-                    assert module not in {'celery', 'subprocess', 'docker'}
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        assert alias.name.split('.')[0] not in {
-                            'celery',
-                            'subprocess',
-                            'docker',
-                        }
+def test_models_and_services_do_not_import_concrete_infrastructure() -> None:
+    """Business models and services stay independent of infrastructure."""
+    for name in ('models.py', 'events.py', 'services.py'):
+        path = SOURCE / name
+        source = path.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ''
+                assert '.adapters' not in module
+                assert module.split('.')[0] not in {
+                    'celery',
+                    'subprocess',
+                    'docker',
+                    'minio',
+                    'sqlalchemy',
+                }
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert alias.name.split('.')[0] not in {
+                        'celery',
+                        'subprocess',
+                        'docker',
+                        'minio',
+                        'sqlalchemy',
+                    }
 
 
 def test_ports_are_protocols() -> None:

@@ -1,21 +1,25 @@
-"""SQLAlchemy transaction boundary for application services."""
+"""Database engine and unit-of-work composition."""
 
+from functools import lru_cache
 from types import TracebackType
 from typing import Self
 
-from infodengue_pipeline.adapters.postgres.repositories import (
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from infodengue_pipeline.config import get_settings
+from infodengue_pipeline.db.repositories import (
     SqlOutboxRepository,
     SqlWorkflowRepository,
 )
-from infodengue_pipeline.ports.contracts import (
+from infodengue_pipeline.protocols import (
     OutboxRepository,
     WorkflowRepository,
 )
-from sqlalchemy.orm import Session, sessionmaker
 
 
 class SqlUnitOfWork:
-    """Own one SQLAlchemy session and transaction."""
+    """Own one SQLAlchemy session and its pipeline repositories."""
 
     def __init__(self, sessions: sessionmaker[Session]) -> None:
         self._sessions = sessions
@@ -58,3 +62,19 @@ class SqlUnitOfWork:
         finally:
             self._session.close()
             self._session = None
+
+
+@lru_cache(maxsize=1)
+def session_factory() -> sessionmaker[Session]:
+    """Create one connection pool per worker process."""
+    settings = get_settings()
+    engine: Engine = create_engine(
+        settings.database_url.get_secret_value(),
+        pool_pre_ping=True,
+    )
+    return sessionmaker(engine, expire_on_commit=False)
+
+
+def unit_of_work() -> SqlUnitOfWork:
+    """Construct one transaction boundary for an application operation."""
+    return SqlUnitOfWork(session_factory())

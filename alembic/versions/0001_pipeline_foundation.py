@@ -24,6 +24,7 @@ def upgrade() -> None:
     op.create_table(
         'workflow',
         sa.Column('workflow_id', sa.Uuid(), primary_key=True),
+        sa.Column('coverage', sa.String(2), nullable=False),
         sa.Column('epiweek', sa.Integer(), nullable=False),
         sa.Column('status', sa.String(16), nullable=False),
         sa.Column('queued_fingerprint', sa.String(64)),
@@ -39,7 +40,9 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.UniqueConstraint('epiweek', name='uq_workflow_epiweek'),
+        sa.UniqueConstraint(
+            'coverage', 'epiweek', name='uq_workflow_coverage_epiweek'
+        ),
         schema='pipeline',
     )
     op.create_table(
@@ -60,9 +63,9 @@ def upgrade() -> None:
         schema='pipeline',
     )
     op.create_index(
-        'ix_pipeline_workflow_epiweek',
+        'ix_pipeline_workflow_coverage_epiweek',
         'workflow',
-        ['epiweek'],
+        ['coverage', 'epiweek'],
         schema='pipeline',
     )
     op.create_table(
@@ -98,7 +101,7 @@ def downgrade() -> None:
     )
     op.drop_table('outbox_event', schema='pipeline')
     op.drop_index(
-        'ix_pipeline_workflow_epiweek',
+        'ix_pipeline_workflow_coverage_epiweek',
         table_name='workflow',
         schema='pipeline',
     )

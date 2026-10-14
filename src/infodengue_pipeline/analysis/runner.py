@@ -1,6 +1,6 @@
 """Safe Phase 0 analysis execution boundary."""
 
-from infodengue_pipeline.ports.contracts import (
+from infodengue_pipeline.protocols import (
     AnalysisJobRequest,
     AnalysisJobResult,
 )

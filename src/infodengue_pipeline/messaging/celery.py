@@ -1,8 +1,9 @@
 """Standalone Celery app and explicit RabbitMQ queues."""
 
 from celery import Celery
-from infodengue_pipeline.config import get_settings
 from kombu import Exchange, Queue
+
+from infodengue_pipeline.config import get_settings
 
 
 def create_celery_app() -> Celery:

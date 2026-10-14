@@ -4,16 +4,18 @@ from dataclasses import replace
 from typing import Callable
 from uuid import uuid4
 
-from infodengue_pipeline.domain.disease import Disease
-from infodengue_pipeline.domain.epiweek import Epiweek
-from infodengue_pipeline.domain.events import IngestionCompleted
-from infodengue_pipeline.domain.workflow import (
-    DEFAULT_REQUIRED_DISEASES,
+from infodengue_pipeline.events import IngestionCompleted
+from infodengue_pipeline.models import (
+    DEFAULT_BR_REQUIRED_DISEASES,
+    DEFAULT_UF_REQUIRED_DISEASES,
+    Coverage,
+    Disease,
+    Epiweek,
     IngestionInput,
     Readiness,
     WorkflowStatus,
 )
-from infodengue_pipeline.ports.contracts import (
+from infodengue_pipeline.protocols import (
     EventPublisher,
     UnitOfWork,
     WorkflowSnapshot,
@@ -40,24 +42,41 @@ class CoordinateEpiweek:
     def __init__(
         self,
         unit_of_work: Callable[[], UnitOfWork],
-        required_diseases: frozenset[Disease] = DEFAULT_REQUIRED_DISEASES,
+        br_required_diseases: frozenset[
+            Disease
+        ] = DEFAULT_BR_REQUIRED_DISEASES,
+        uf_required_diseases: frozenset[
+            Disease
+        ] = DEFAULT_UF_REQUIRED_DISEASES,
     ) -> None:
         self._unit_of_work = unit_of_work
-        self._required_diseases = frozenset(required_diseases)
-        if not self._required_diseases:
-            raise ValueError('required_diseases must not be empty')
+        self._required_by_coverage = {
+            Coverage.BR: frozenset(br_required_diseases),
+            **{
+                coverage: frozenset(uf_required_diseases)
+                for coverage in Coverage
+                if not coverage.is_national
+            },
+        }
+        if any(
+            not diseases for diseases in self._required_by_coverage.values()
+        ):
+            raise ValueError('required diseases must not be empty')
 
     def record(self, event: IngestionCompleted) -> WorkflowSnapshot:
         """Apply an ingestion event idempotently to one epiweek."""
         epiweek = Epiweek.parse(event.epiweek)
+        coverage = event.coverage
         with self._unit_of_work() as work:
-            current = work.workflows.get_for_update(epiweek)
+            required_diseases = self._required_by_coverage[coverage]
+            current = work.workflows.get_for_update(coverage, epiweek)
             if current is None:
                 current = WorkflowSnapshot(
                     workflow_id=uuid4(),
                     readiness=Readiness(
+                        coverage,
                         epiweek,
-                        required_diseases=self._required_diseases,
+                        required_diseases=required_diseases,
                     ),
                     status=WorkflowStatus.WAITING,
                 )
@@ -65,7 +84,7 @@ class CoordinateEpiweek:
                 current = replace(
                     current,
                     readiness=current.readiness.with_required_diseases(
-                        self._required_diseases
+                        required_diseases
                     ),
                 )
             incoming = IngestionInput(event.run_id, event.fingerprint)
@@ -86,14 +105,16 @@ class CoordinateEpiweek:
             work.commit()
         return updated
 
-    def claim_ready(self, epiweek: Epiweek) -> WorkflowSnapshot | None:
+    def claim_ready(
+        self, coverage: Coverage, epiweek: Epiweek
+    ) -> WorkflowSnapshot | None:
         """Claim current inputs at most once per fingerprint."""
         with self._unit_of_work() as work:
-            current = work.workflows.get_for_update(epiweek)
+            current = work.workflows.get_for_update(coverage, epiweek)
             if current is None:
                 return None
             readiness = current.readiness.with_required_diseases(
-                self._required_diseases
+                self._required_by_coverage[coverage]
             )
             if (
                 current.status is not WorkflowStatus.READY

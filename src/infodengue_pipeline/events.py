@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 from typing import Literal, Self
 from uuid import UUID, uuid4
 
-from infodengue_pipeline.domain.disease import Disease
-from infodengue_pipeline.domain.epiweek import Epiweek
 from pydantic import BaseModel, ConfigDict, field_validator
+
+from infodengue_pipeline.models import Coverage, Disease, Epiweek
 
 
 class IngestionCompleted(BaseModel):
@@ -21,6 +21,7 @@ class IngestionCompleted(BaseModel):
     event_id: UUID
     run_id: UUID
     disease: Disease
+    coverage: Coverage
     epiweek: int
     fingerprint: str
     completed_at: datetime
@@ -53,6 +54,7 @@ class IngestionCompleted(BaseModel):
         *,
         run_id: UUID,
         disease: Disease,
+        coverage: Coverage,
         epiweek: Epiweek,
         fingerprint: str,
     ) -> Self:
@@ -61,6 +63,7 @@ class IngestionCompleted(BaseModel):
             event_id=uuid4(),
             run_id=run_id,
             disease=disease,
+            coverage=coverage,
             epiweek=int(epiweek),
             fingerprint=fingerprint,
             completed_at=datetime.now(timezone.utc),

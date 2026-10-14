@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Protocol, Self
 from uuid import UUID
 
-from infodengue_pipeline.domain.disease import Disease
-from infodengue_pipeline.domain.epiweek import Epiweek
-from infodengue_pipeline.domain.events import IngestionCompleted
-from infodengue_pipeline.domain.workflow import (
+from infodengue_pipeline.events import IngestionCompleted
+from infodengue_pipeline.models import (
+    Coverage,
+    Epiweek,
     Readiness,
+    SinanMetadata,
     WorkflowStatus,
 )
 
@@ -19,9 +20,11 @@ from infodengue_pipeline.domain.workflow import (
 class ObjectMetadata:
     """Object metadata without a MinIO SDK dependency."""
 
+    bucket: str
     key: str
     size: int
     etag: str
+    version_id: str | None = None
 
 
 class ObjectStore(Protocol):
@@ -43,15 +46,7 @@ class ObjectStore(Protocol):
 class CanonicalStorage(Protocol):
     """Canonical imported source storage."""
 
-    def destination(
-        self,
-        *,
-        country: str,
-        file_type: str,
-        disease: Disease,
-        epiweek: Epiweek,
-        filename: str,
-    ) -> Path:
+    def destination(self, metadata: SinanMetadata) -> Path:
         """Return a contained canonical destination path."""
 
 
@@ -75,8 +70,10 @@ class WorkflowSnapshot:
 class WorkflowRepository(Protocol):
     """Transactional workflow state persistence."""
 
-    def get_for_update(self, epiweek: Epiweek) -> WorkflowSnapshot | None:
-        """Lock and load one epiweek state."""
+    def get_for_update(
+        self, coverage: Coverage, epiweek: Epiweek
+    ) -> WorkflowSnapshot | None:
+        """Lock and load one coverage and epiweek state."""
 
     def save(self, workflow: WorkflowSnapshot) -> None:
         """Insert or update one epiweek state."""
@@ -116,9 +113,9 @@ class AnalysisJobRequest:
     """Validated parameters for a future finite scientific OCI job."""
 
     job_id: UUID
+    coverage: Coverage
     epiweek: Epiweek
     input_fingerprint: str
-    states: tuple[str, ...] = ('ALL',)
     cores: int = 1
     load: bool = True
 
@@ -128,14 +125,13 @@ class AnalysisJobRequest:
             raise ValueError('input_fingerprint must not be empty')
         if self.cores < 1 or self.cores > 64:
             raise ValueError('cores must be between 1 and 64')
-        if not self.states or any(
-            state != 'ALL'
-            and (len(state) != 2 or not state.isalpha() or not state.isupper())
-            for state in self.states
-        ):
-            raise ValueError('states must be ALL or uppercase UF codes')
-        if 'ALL' in self.states and len(self.states) != 1:
-            raise ValueError('ALL cannot be combined with UF codes')
+
+    @property
+    def states(self) -> tuple[str, ...]:
+        """Derive the analysis scope from delivery coverage."""
+        return (
+            ('ALL',) if self.coverage.is_national else (self.coverage.value,)
+        )
 
 
 @dataclass(frozen=True)
@@ -157,7 +153,7 @@ class AnalysisRunner(Protocol):
 class ArtifactPublisher(Protocol):
     """Publish validated scientific output artifacts."""
 
-    def publish(self, result: AnalysisJobResult) -> None:
+    def publish(self, _result: AnalysisJobResult) -> None:
         """Publish artifacts after validation."""
 
 

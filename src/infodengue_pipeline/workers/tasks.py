@@ -1,17 +1,17 @@
 """Thin Celery adapters for the pipeline application services."""
 
-from infodengue_pipeline.adapters.postgres.engine import unit_of_work
-from infodengue_pipeline.adapters.rabbitmq.celery_app import celery_app
-from infodengue_pipeline.adapters.rabbitmq.publisher import (
+from infodengue_pipeline.config import get_settings
+from infodengue_pipeline.db.engine import unit_of_work
+from infodengue_pipeline.events import IngestionCompleted
+from infodengue_pipeline.logging import configure_logging
+from infodengue_pipeline.messaging.celery import celery_app
+from infodengue_pipeline.messaging.publisher import (
     CeleryEventPublisher,
 )
-from infodengue_pipeline.application.services import (
+from infodengue_pipeline.services import (
     CoordinateEpiweek,
     PublishOutbox,
 )
-from infodengue_pipeline.config import get_settings
-from infodengue_pipeline.domain.events import IngestionCompleted
-from infodengue_pipeline.logging import configure_logging
 
 
 @celery_app.task(name='pipeline.health.ping')  # type: ignore[untyped-decorator]
@@ -29,7 +29,9 @@ def ingestion_completed(payload: dict[str, object]) -> str:
     configure_logging(settings.log_level)
     event = IngestionCompleted.model_validate(payload)
     workflow = CoordinateEpiweek(
-        unit_of_work, required_diseases=settings.required_diseases
+        unit_of_work,
+        br_required_diseases=settings.br_required_diseases,
+        uf_required_diseases=settings.uf_required_diseases,
     ).record(event)
     return workflow.status.value
 

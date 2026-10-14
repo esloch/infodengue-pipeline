@@ -1,22 +1,29 @@
 """SQLAlchemy implementations of pipeline repositories."""
 
+import hashlib
+
 from datetime import datetime, timezone
 from uuid import UUID
 
-from infodengue_pipeline.adapters.postgres.models import (
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import Session
+
+from infodengue_pipeline.db.models import (
     OutboxEventRow,
     OutboxStatus,
     WorkflowInputRow,
     WorkflowRow,
 )
-from infodengue_pipeline.domain.epiweek import Epiweek
-from infodengue_pipeline.domain.events import IngestionCompleted
-from infodengue_pipeline.domain.workflow import IngestionInput, Readiness
-from infodengue_pipeline.ports.contracts import WorkflowSnapshot
-from sqlalchemy import func, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm import Session
+from infodengue_pipeline.events import IngestionCompleted
+from infodengue_pipeline.models import (
+    Coverage,
+    Epiweek,
+    IngestionInput,
+    Readiness,
+)
+from infodengue_pipeline.protocols import WorkflowSnapshot
 
 
 class SqlWorkflowRepository:
@@ -25,17 +32,27 @@ class SqlWorkflowRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def get_for_update(self, epiweek: Epiweek) -> WorkflowSnapshot | None:
+    def get_for_update(
+        self, coverage: Coverage, epiweek: Epiweek
+    ) -> WorkflowSnapshot | None:
         """Serialize writers for a week, including its first row insertion."""
         if self._session.bind is not None and (
             self._session.bind.dialect.name == 'postgresql'
         ):
-            self._session.execute(
-                select(func.pg_advisory_xact_lock(int(epiweek)))
+            lock_key = int.from_bytes(
+                hashlib.sha256(
+                    f'{coverage.value}:{epiweek}'.encode()
+                ).digest()[:8],
+                'big',
+                signed=True,
             )
+            self._session.execute(select(func.pg_advisory_xact_lock(lock_key)))
         row = self._session.scalar(
             select(WorkflowRow)
-            .where(WorkflowRow.epiweek == int(epiweek))
+            .where(
+                WorkflowRow.coverage == coverage,
+                WorkflowRow.epiweek == int(epiweek),
+            )
             .with_for_update()
         )
         if row is None:
@@ -48,7 +65,7 @@ class SqlWorkflowRepository:
         }
         return WorkflowSnapshot(
             workflow_id=row.workflow_id,
-            readiness=Readiness(epiweek, inputs),
+            readiness=Readiness(coverage, epiweek, inputs),
             status=row.status,
             queued_fingerprint=row.queued_fingerprint,
         )
@@ -60,6 +77,7 @@ class SqlWorkflowRepository:
         if row is None:
             row = WorkflowRow(
                 workflow_id=workflow.workflow_id,
+                coverage=readiness.coverage,
                 epiweek=int(readiness.epiweek),
             )
             self._session.add(row)
