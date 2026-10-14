@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     environment: Literal['dev', 'staging', 'prod'] = 'dev'
     log_level: str = 'INFO'
     database_url: SecretStr = SecretStr(
-        'postgresql+psycopg://pipeline_dev:pipeline_dev@localhost:5434/'
+        'postgresql+psycopg://pipeline_dev:pipeline_dev_only@localhost:5434/'
         'pipeline_dev'
     )
     rabbitmq_url: SecretStr = SecretStr(

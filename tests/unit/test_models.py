@@ -73,6 +73,16 @@ def test_required_disease_configuration(monkeypatch) -> None:
         Settings(_env_file=None, br_required_diseases='')
 
 
+def test_default_database_url_matches_development_compose(monkeypatch) -> None:
+    """The default database credentials match the local Compose service."""
+    monkeypatch.delenv('INFODENGUE_PIPELINE_DATABASE_URL', raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.database_url.get_secret_value() == (
+        'postgresql+psycopg://pipeline_dev:pipeline_dev_only@localhost:5434/'
+        'pipeline_dev'
+    )
+
+
 @pytest.mark.parametrize('value', [202600, 202654, '20261', '2026AA'])
 def test_invalid_epiweek(value: int | str) -> None:
     """Malformed and impossible weeks cannot enter domain state."""
