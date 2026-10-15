@@ -12,6 +12,7 @@ from infodengue_pipeline.db.repositories import SqlOutboxRepository
 from infodengue_pipeline.events import IngestionCompleted
 from infodengue_pipeline.models import (
     Coverage,
+    Disease,
     Epiweek,
     disease_from_cid10,
 )
@@ -32,6 +33,31 @@ class CompletedRun:
     delivery_se: int
     sha256: str
     finished_at: datetime
+    canonical_cid10: str | None = None
+
+
+def resolve_run_disease(disease: str, canonical_cid10: str | None) -> Disease:
+    """Resolve an upstream coarse disease plus its authoritative CID-10."""
+    coarse = disease.strip().upper()
+    canonical = canonical_cid10.strip().upper() if canonical_cid10 else None
+    if canonical is None:
+        if coarse == 'A90':
+            return disease_from_cid10('A90')
+        if coarse == 'A92':
+            raise ValueError(
+                'AlertaDengue run has ambiguous A92 disease '
+                'without canonical CID'
+            )
+        raise ValueError(f'unsupported AlertaDengue disease code {coarse!r}')
+
+    resolved = disease_from_cid10(canonical)
+    expected_coarse = 'A90' if canonical == 'A90' else 'A92'
+    if coarse != expected_coarse:
+        raise ValueError(
+            f'inconsistent AlertaDengue disease {coarse!r} and canonical '
+            f'CID {canonical!r}'
+        )
+    return resolved
 
 
 class CompletedIngestionSource(Protocol):
@@ -55,7 +81,8 @@ class PostgresCompletedIngestionSource:
             row = (
                 connection.execute(
                     text(
-                        'SELECT id, status, uf, disease, delivery_se, sha256, '
+                        'SELECT id, status, uf, disease, canonical_cid10, '
+                        'delivery_se, sha256, '
                         'finished_at FROM ingestion.run '
                         'WHERE sha256 = :sha256 AND status = :status'
                     ),
@@ -79,6 +106,11 @@ class PostgresCompletedIngestionSource:
             delivery_se=int(row['delivery_se']),
             sha256=str(row['sha256']),
             finished_at=finished_at.astimezone(timezone.utc),
+            canonical_cid10=(
+                str(row['canonical_cid10'])
+                if row['canonical_cid10'] is not None
+                else None
+            ),
         )
 
 
@@ -122,13 +154,7 @@ class IngestionCompletionBridge:
                 continue
             try:
                 coverage = Coverage(run.uf)
-                disease_code = run.disease.strip().upper()
-                if disease_code == 'A92':
-                    raise ValueError(
-                        'completed ingestion run has ambiguous disease code '
-                        'A92; canonical A92.0 or A928 is required'
-                    )
-                disease = disease_from_cid10(disease_code)
+                disease = resolve_run_disease(run.disease, run.canonical_cid10)
                 epiweek = Epiweek.parse(run.delivery_se)
             except ValueError as exc:
                 with self._sessions.begin() as session:

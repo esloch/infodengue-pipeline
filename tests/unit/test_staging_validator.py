@@ -14,6 +14,7 @@ from infodengue_pipeline.db.models import (
     WorkflowInputRow,
     WorkflowRow,
 )
+from infodengue_pipeline.ingestion.completion import resolve_run_disease
 from infodengue_pipeline.models import (
     AnalysisJobStatus,
     Coverage,
@@ -174,3 +175,11 @@ def test_validator_requires_fixture_prefix_and_load_false() -> None:
             'approved-fixtures/staging-fixture.csv',
             30,
         )
+
+
+def test_staging_run_disease_resolution_accepts_canonical_a92() -> None:
+    """The validator's source disease contract distinguishes A92 variants."""
+    assert resolve_run_disease('A92', 'A92.0') is Disease.CHIKUNGUNYA
+    assert resolve_run_disease('A92', 'A928') is Disease.ZIKA
+    with pytest.raises(ValueError, match='ambiguous A92'):
+        resolve_run_disease('A92', None)

@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from infodengue_pipeline.db.engine import SqlUnitOfWork
 from infodengue_pipeline.db.jobs import AnalysisJobService
 from infodengue_pipeline.db.models import (
@@ -11,7 +13,9 @@ from infodengue_pipeline.db.models import (
     IngressObjectRow,
     IngressStatus,
     OutboxEventRow,
+    WorkflowInputRow,
 )
+from infodengue_pipeline.events import IngestionCompleted
 from infodengue_pipeline.ingestion.completion import (
     CompletedRun,
     IngestionCompletionBridge,
@@ -240,6 +244,7 @@ def test_completion_bridge_maps_completed_run_to_one_outbox_event(
         delivery_se=202639,
         sha256=digest,
         finished_at=datetime.now(timezone.utc),
+        canonical_cid10='A90',
     )
     source = FakeCompletedSource(run)
     bridge = IngestionCompletionBridge(sessions, source)
@@ -253,6 +258,7 @@ def test_completion_bridge_maps_completed_run_to_one_outbox_event(
         assert ingress.run_id == run.run_id
         assert len(events) == 1
         assert events[0].payload['coverage'] == 'MG'
+        assert events[0].payload['disease'] == 'A90'
         assert events[0].payload['fingerprint'] == digest
         assert events[0].payload['event_id']
 
@@ -339,12 +345,75 @@ def test_bridge_rejects_ambiguous_external_disease_code(sessions) -> None:
     with sessions() as session:
         ingress = session.get(IngressObjectRow, object_id)
         assert ingress is not None
-        assert 'ambiguous disease code A92' in (ingress.last_error or '')
-        assert 'canonical A92.0 or A928 is required' in (
+        assert 'ambiguous A92 disease without canonical CID' in (
             ingress.last_error or ''
         )
         assert ingress.status is IngressStatus.MATERIALIZED
         assert session.scalars(select(OutboxEventRow)).all() == []
+        assert session.scalars(select(WorkflowInputRow)).all() == []
+
+
+@pytest.mark.parametrize(
+    ('canonical_cid10', 'expected_disease'),
+    [('A92.0', 'A92.0'), ('A928', 'A928')],
+)
+def test_bridge_uses_canonical_disease_for_coarse_a92(
+    sessions, canonical_cid10, expected_disease
+) -> None:
+    """Canonical A92 variants bridge with their exact disease identity."""
+    digest = 'e' * 64
+    metadata = ObjectMetadata('sinan', f'{expected_disease}.csv', 15, 'etag')
+    object_id = uuid4()
+    with sessions.begin() as session:
+        session.add(
+            IngressObjectRow(
+                object_id=object_id,
+                bucket=metadata.bucket,
+                object_key=metadata.key,
+                object_identity=object_identity(metadata),
+                etag=metadata.etag,
+                version_id=None,
+                size=metadata.size,
+                sha256=digest,
+                destination='/tmp/canonical.csv',
+                status=IngressStatus.MATERIALIZED,
+            )
+        )
+    run = CompletedRun(
+        uuid4(),
+        'completed',
+        'BR',
+        'A92',
+        202639,
+        digest,
+        datetime.now(timezone.utc),
+        canonical_cid10,
+    )
+    assert (
+        IngestionCompletionBridge(sessions, FakeCompletedSource(run)).poll()
+        == 1
+    )
+    with sessions() as session:
+        ingress = session.get(IngressObjectRow, object_id)
+        event = session.scalar(select(OutboxEventRow))
+        assert ingress is not None and ingress.run_id == run.run_id
+        assert event is not None
+        assert event.payload['disease'] == expected_disease
+        assert event.payload['fingerprint'] == digest
+    workflow = CoordinateEpiweek(lambda: SqlUnitOfWork(sessions)).record(
+        IngestionCompleted.model_validate(event.payload)
+    )
+    with sessions() as session:
+        input_row = session.scalar(
+            select(WorkflowInputRow).where(
+                WorkflowInputRow.run_id == run.run_id
+            )
+        )
+        assert input_row is not None
+        assert input_row.workflow_id == workflow.workflow_id
+        assert input_row.disease.value == expected_disease
+        assert input_row.run_id == run.run_id
+        assert input_row.fingerprint == digest
 
 
 def test_automated_orchestration_e2e(sessions, tmp_path: Path) -> None:

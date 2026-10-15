@@ -22,7 +22,10 @@ from infodengue_pipeline.db.models import (
     WorkflowInputRow,
     WorkflowRow,
 )
-from infodengue_pipeline.ingestion.completion import build_source
+from infodengue_pipeline.ingestion.completion import (
+    build_source,
+    resolve_run_disease,
+)
 from infodengue_pipeline.models import (
     AnalysisJobRequest,
     AnalysisJobStatus,
@@ -222,11 +225,7 @@ def main() -> int:
     )
     if run.sha256 != ingress.sha256:
         raise RuntimeError('completed run SHA-256 does not match ingress')
-    if run.disease.strip().upper() == 'A92':
-        raise RuntimeError(
-            'completed ingestion run has ambiguous disease code A92; '
-            'canonical A92.0 or A928 is required'
-        )
+    run_disease = resolve_run_disease(run.disease, run.canonical_cid10)
     workflow_input = wait_for(
         f'workflow input for run_id={run.run_id}',
         args.timeout_seconds,
@@ -235,6 +234,10 @@ def main() -> int:
     if workflow_input.run_id != run.run_id:
         raise RuntimeError(
             'workflow input run_id does not match completed run'
+        )
+    if workflow_input.disease is not run_disease:
+        raise RuntimeError(
+            'workflow input disease does not match completed AlertaDengue run'
         )
     if workflow_input.fingerprint != ingress.sha256:
         raise RuntimeError(

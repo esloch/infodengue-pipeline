@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
+
 from infodengue_pipeline.ingestion.completion import (
     PostgresCompletedIngestionSource,
     build_source,
@@ -67,6 +69,7 @@ def test_source_maps_contract_fields_and_enforces_read_only() -> None:
             'status': 'completed',
             'uf': 'MG',
             'disease': 'A90',
+            'canonical_cid10': 'A90',
             'delivery_se': 202639,
             'sha256': 'a' * 64,
             'finished_at': finished_at,
@@ -78,6 +81,8 @@ def test_source_maps_contract_fields_and_enforces_read_only() -> None:
     assert run is not None
     assert run.run_id == run_id
     assert run.uf == 'MG'
+    assert run.disease == 'A90'
+    assert run.canonical_cid10 == 'A90'
     assert run.delivery_se == 202639
     assert connection.statements[0][0] == 'SET TRANSACTION READ ONLY'
     query, values = connection.statements[1]
@@ -94,6 +99,7 @@ def test_source_ignores_missing_run_and_missing_finish_time() -> None:
         'status': 'completed',
         'uf': 'SP',
         'disease': 'A90',
+        'canonical_cid10': None,
         'delivery_se': 202639,
         'sha256': 'b' * 64,
         'finished_at': None,
@@ -109,6 +115,7 @@ def test_source_normalizes_naive_timestamp_to_utc() -> None:
         'status': 'completed',
         'uf': 'SP',
         'disease': 'A90',
+        'canonical_cid10': None,
         'delivery_se': 202639,
         'sha256': 'c' * 64,
         'finished_at': datetime(2026, 10, 14),
@@ -118,6 +125,43 @@ def test_source_normalizes_naive_timestamp_to_utc() -> None:
     ).by_sha256('c' * 64)
     assert run is not None
     assert run.finished_at.utcoffset().total_seconds() == 0
+
+
+@pytest.mark.parametrize(
+    ('disease', 'canonical', 'expected'),
+    [
+        ('A90', 'A90', 'A90'),
+        ('A92', 'A92.0', 'A92.0'),
+        ('A92', 'A928', 'A928'),
+        ('A90', None, 'A90'),
+    ],
+)
+def test_resolve_run_disease(disease, canonical, expected) -> None:
+    """Resolve each supported canonical identity and legacy dengue."""
+    from infodengue_pipeline.ingestion.completion import resolve_run_disease
+
+    assert resolve_run_disease(disease, canonical).value == expected
+
+
+@pytest.mark.parametrize(
+    ('disease', 'canonical', 'message'),
+    [
+        ('A92', None, 'ambiguous A92'),
+        ('A90', 'A92.0', 'inconsistent'),
+        ('A92', 'A90', 'inconsistent'),
+        ('A92', 'UNKNOWN', 'unsupported disease CID-10'),
+    ],
+)
+def test_resolve_run_disease_rejects_invalid_metadata(
+    disease, canonical, message
+) -> None:
+    """Reject ambiguous, inconsistent, and unsupported source metadata."""
+    import pytest
+
+    from infodengue_pipeline.ingestion.completion import resolve_run_disease
+
+    with pytest.raises(ValueError, match=message):
+        resolve_run_disease(disease, canonical)
 
 
 def test_build_source_creates_adapter_without_sibling_imports() -> None:
