@@ -101,18 +101,20 @@ def validate_outputs(output_dir: Path, request: AnalysisJobRequest) -> None:
     )
     if not br_output.is_file() or br_output.stat().st_size == 0:
         raise ValueError('missing non-empty consolidated BR RData')
-    sql_outputs = [
-        output_dir / 'sql' / name
-        for name in (
-            'output_dengue.sql',
-            'output_chik.sql',
-            'output_zika.sql',
-        )
+    required_sql_outputs = (
+        output_dir / 'sql' / 'output_dengue.sql',
+        output_dir / 'sql' / 'output_chik.sql',
+    )
+    missing_sql_outputs = [
+        path.name
+        for path in required_sql_outputs
+        if not path.is_file() or path.stat().st_size == 0
     ]
-    if not any(
-        path.is_file() and path.stat().st_size > 0 for path in sql_outputs
-    ):
-        raise ValueError('missing non-empty generated alert SQL')
+    if missing_sql_outputs:
+        raise ValueError(
+            'missing non-empty required SQL outputs: '
+            + ', '.join(missing_sql_outputs)
+        )
     if request.load:
         maps = list((output_dir / 'incidence_maps').rglob('*.png'))
         if not any(

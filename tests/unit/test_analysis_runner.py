@@ -35,6 +35,7 @@ def write_contract_outputs(root: Path, week: str = '202639') -> None:
     (state / 'ale-MG-202639.RData').write_bytes(b'state')
     (br / 'ale-BR-202639.RData').write_bytes(b'br')
     (sql / 'output_dengue.sql').write_bytes(b'sql')
+    (sql / 'output_chik.sql').write_bytes(b'sql')
 
 
 def test_argv_maps_br_and_state_scope_without_shell() -> None:
@@ -87,6 +88,50 @@ def test_output_validation_requires_selected_state_artifact(
         b'state'
     )
     with pytest.raises(ValueError, match='state RData'):
+        validate_outputs(tmp_path, request())
+
+
+@pytest.mark.parametrize(
+    ('filename', 'contents'),
+    [
+        ('output_dengue.sql', None),
+        ('output_chik.sql', None),
+        ('output_chik.sql', b''),
+    ],
+    ids=['missing-dengue', 'missing-chik', 'empty-chik'],
+)
+def test_output_validation_requires_nonempty_dengue_and_chik_sql(
+    tmp_path: Path, filename: str, contents: bytes | None
+) -> None:
+    """Both required SQL outputs must exist and contain data."""
+    write_contract_outputs(tmp_path)
+    sql_path = tmp_path / 'sql' / filename
+    if contents is None:
+        sql_path.unlink()
+    else:
+        sql_path.write_bytes(contents)
+    with pytest.raises(ValueError, match=filename):
+        validate_outputs(tmp_path, request())
+
+
+def test_output_validation_does_not_require_zika_sql(tmp_path: Path) -> None:
+    """The public finite-job contract requires dengue and chik only."""
+    write_contract_outputs(tmp_path)
+    assert not (tmp_path / 'sql' / 'output_zika.sql').exists()
+    validate_outputs(tmp_path, request())
+
+
+def test_zika_sql_alone_does_not_satisfy_required_sql_outputs(
+    tmp_path: Path,
+) -> None:
+    """Optional Zika SQL cannot replace the mandatory pair."""
+    write_contract_outputs(tmp_path)
+    (tmp_path / 'sql' / 'output_dengue.sql').unlink()
+    (tmp_path / 'sql' / 'output_chik.sql').unlink()
+    (tmp_path / 'sql' / 'output_zika.sql').write_bytes(b'sql')
+    with pytest.raises(
+        ValueError, match=r'output_dengue.sql.*output_chik.sql'
+    ):
         validate_outputs(tmp_path, request())
 
 
