@@ -38,6 +38,11 @@ groups:
       config:
         help: Validate the development Compose configuration
         run: docker compose --env-file .env.example -f containers/compose.yaml config --quiet
+      staging-config:
+        help: Validate the staging topology using placeholders only
+        run: >-
+          docker compose --env-file .env.staging.example
+          -f containers/compose-staging.yaml config --quiet
       up:
         help: Start development services
         run: docker compose --env-file .env.example -f containers/compose.yaml up -d --build
@@ -60,3 +65,30 @@ groups:
       validate-storage:
         help: Validate canonical storage on the staging server's local filesystem
         run: python scripts/validate_staging_storage.py
+      validate-e2e:
+        help: Validate one explicitly supplied object through the real staging E2E flow
+        args:
+          object-key:
+            help: Safe staging MinIO fixture object key
+            type: string
+            required: true
+          timeout-seconds:
+            help: Maximum wait for each named workflow stage
+            type: integer
+            default: 1800
+        run: >-
+          python scripts/validate_staging_e2e.py
+          --object-key "${{ args.object_key }}"
+          --timeout-seconds "${{ args.timeout_seconds }}"
+
+  analysis:
+    tasks:
+      worker:
+        help: Run the host-side finite OCI analysis worker
+        run: >-
+          celery -A infodengue_pipeline.messaging.celery:celery_app worker
+          --loglevel=INFO --queues=pipeline.analysis --concurrency=1
+          --hostname=worker-analysis@%h
+      health:
+        help: Check the independent host-side analysis worker
+        run: python scripts/check_analysis_worker.py

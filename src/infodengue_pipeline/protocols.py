@@ -31,7 +31,12 @@ class ObjectStore(Protocol):
         """List objects under a prefix."""
         ...
 
-    def materialize(self, _key: str, _destination: Path) -> ObjectMetadata:
+    def materialize(
+        self,
+        _key: str,
+        _destination: Path,
+        _version_id: str | None = None,
+    ) -> ObjectMetadata:
         """Download an ingress object to a local path."""
         ...
 

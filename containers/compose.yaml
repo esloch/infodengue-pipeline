@@ -126,6 +126,33 @@ services:
       timeout: 8s
       retries: 5
 
+  worker-beat:
+    build:
+      context: ..
+      dockerfile: containers/Dockerfile
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+    env_file: ../.env.example
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.messaging.celery:celery_app
+      - beat
+      - --loglevel=INFO
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "raise SystemExit(0 if b'beat' in open('/proc/1/cmdline', 'rb').read() else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   worker-orchestration:
     build:
       context: ..
@@ -161,3 +188,4 @@ volumes:
   pipeline_minio:
   pipeline_incoming:
   pipeline_canonical:
+  pipeline_analysis_output:

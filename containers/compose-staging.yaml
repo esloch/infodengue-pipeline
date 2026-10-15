@@ -1,0 +1,158 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pipeline_staging
+      POSTGRES_USER: pipeline_staging
+      POSTGRES_PASSWORD: ${PIPELINE_POSTGRES_PASSWORD:?set staging secret}
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - pipeline_staging_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline_staging -d pipeline_staging"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  rabbitmq:
+    image: rabbitmq:3.13.7-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: pipeline_staging
+      RABBITMQ_DEFAULT_PASS: ${PIPELINE_RABBITMQ_PASSWORD:?set staging secret}
+    ports:
+      - "127.0.0.1:5674:5672"
+    volumes:
+      - pipeline_staging_rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  migrate:
+    image: ${PIPELINE_IMAGE:?set pipeline image}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  worker-ingestion:
+    image: ${PIPELINE_IMAGE:?set pipeline image}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.messaging.celery:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=pipeline.ingestion
+      - --hostname=worker-ingestion@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+      - staging_integrations
+    volumes:
+      - ${STAGING_SINAN_INCOMING_HOST_PATH:?set shared incoming directory}:/var/lib/pipeline/incoming
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 --destination=worker-ingestion@$$(hostname) | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 5
+
+  worker-events:
+    image: ${PIPELINE_IMAGE:?set pipeline image}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.messaging.celery:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=pipeline.events
+      - --hostname=worker-events@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+      - staging_integrations
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 --destination=worker-events@$$(hostname) | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 5
+
+  worker-orchestration:
+    image: ${PIPELINE_IMAGE:?set pipeline image}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.messaging.celery:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=pipeline.orchestration
+      - --hostname=worker-orchestration@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+      - staging_integrations
+    volumes:
+      - ${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}:${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 --destination=worker-orchestration@$$(hostname) | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 5
+
+  worker-beat:
+    image: ${PIPELINE_IMAGE:?set pipeline image}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.messaging.celery:celery_app
+      - beat
+      - --loglevel=INFO
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os; raise SystemExit(not any('celery' in line and 'beat' in line for line in open('/proc/1/cmdline').read().split(chr(0))))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pipeline_staging_pgdata:
+  pipeline_staging_rabbitmq:
+
+networks:
+  staging_integrations:
+    external: true
+    name: ${STAGING_INTEGRATION_NETWORK:?set existing staging network}
