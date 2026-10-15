@@ -98,7 +98,6 @@ force-exclude = true
 src = ["./"]
 exclude = [
   'docs',
-  'codex_instructions.md',
   'infodengue_pipeline-*/',
 ]
 

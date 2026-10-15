@@ -10,7 +10,6 @@ from infodengue_pipeline.db.engine import session_factory, unit_of_work
 from infodengue_pipeline.db.jobs import AnalysisJobService
 from infodengue_pipeline.db.models import (
     AnalysisJobRow,
-    AnalysisJobStatus,
     WorkflowRow,
 )
 from infodengue_pipeline.events import IngestionCompleted
@@ -24,7 +23,12 @@ from infodengue_pipeline.messaging.celery import celery_app
 from infodengue_pipeline.messaging.publisher import (
     CeleryEventPublisher,
 )
-from infodengue_pipeline.models import Coverage, Epiweek, WorkflowStatus
+from infodengue_pipeline.models import (
+    AnalysisJobStatus,
+    Coverage,
+    Epiweek,
+    WorkflowStatus,
+)
 from infodengue_pipeline.services import (
     CoordinateEpiweek,
     PublishOutbox,

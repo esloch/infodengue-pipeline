@@ -62,6 +62,11 @@ optional. State input requires A90; A92.0 and A928 are optional. The newest
 per-disease input wins by `(completed_at, run_id)`. Every available supported
 input participates in the fingerprint.
 
+AlertaDengue currently collapses canonical A92.0 and A928 to `A92` in its
+completed run metadata. The completion bridge rejects that ambiguous value.
+UF dengue readiness can be validated; BR readiness requiring A92.0 cannot be
+validated until AlertaDengue preserves the canonical CID.
+
 PostgreSQL row locking protects the READY-to-QUEUED transition and unique
 `(workflow_id, input_fingerprint)` constraint allows one logical analysis job.
 The analysis consumer atomically claims QUEUED; duplicate delivery cannot run

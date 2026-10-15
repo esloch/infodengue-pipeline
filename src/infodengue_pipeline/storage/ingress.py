@@ -126,21 +126,6 @@ class IngressCoordinator:
                         f'{metadata.key}'
                     )
                 digest = file_sha256(destination)
-                with self._sessions.begin() as session:
-                    row = session.get(IngressObjectRow, object_id)
-                    if row is None:
-                        raise RuntimeError('ingress record disappeared')
-                    row.sha256 = digest
-                    row.status = IngressStatus.MATERIALIZED
-                    row.materialized_at = datetime.now(timezone.utc)
-                    row.last_error = None
-                logger.info(
-                    'ingress_object_materialized',
-                    object_id=str(object_id),
-                    object_key=metadata.key,
-                    sha256=digest,
-                )
-                completed += 1
             except Exception as exc:
                 with self._sessions.begin() as session:
                     row = session.get(IngressObjectRow, object_id)
@@ -153,5 +138,20 @@ class IngressCoordinator:
                     object_key=metadata.key,
                     error_type=type(exc).__name__,
                 )
-                raise
+                continue
+            with self._sessions.begin() as session:
+                row = session.get(IngressObjectRow, object_id)
+                if row is None:
+                    raise RuntimeError('ingress record disappeared')
+                row.sha256 = digest
+                row.status = IngressStatus.MATERIALIZED
+                row.materialized_at = datetime.now(timezone.utc)
+                row.last_error = None
+            logger.info(
+                'ingress_object_materialized',
+                object_id=str(object_id),
+                object_key=metadata.key,
+                sha256=digest,
+            )
+            completed += 1
         return completed

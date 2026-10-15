@@ -39,7 +39,6 @@ class Settings(BaseSettings):
     minio_bucket: str = 'sinan-infodengue-dev'
     minio_prefix: str = ''
     incoming_root: Path = Path('.local/incoming')
-    canonical_root: Path = Path('.local/canonical')
     alerta_database_url: SecretStr | None = None
     analysis_image: str | None = None
     analysis_output_root: Path = Path('.local/analysis-output')

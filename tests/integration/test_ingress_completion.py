@@ -4,13 +4,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-import pytest
-
 from infodengue_pipeline.db.engine import SqlUnitOfWork
 from infodengue_pipeline.db.jobs import AnalysisJobService
 from infodengue_pipeline.db.models import (
     AnalysisJobRow,
-    AnalysisJobStatus,
     IngressObjectRow,
     IngressStatus,
     OutboxEventRow,
@@ -21,6 +18,7 @@ from infodengue_pipeline.ingestion.completion import (
 )
 from infodengue_pipeline.models import (
     AnalysisJobResult,
+    AnalysisJobStatus,
     Coverage,
     Epiweek,
     ObjectMetadata,
@@ -43,6 +41,7 @@ class FakeStore:
         self.objects = objects
         self.downloads: list[str] = []
         self.fail = False
+        self.fail_keys: set[str] = set()
 
     def bucket_exists(self) -> bool:
         """Report that the fake bucket exists."""
@@ -64,7 +63,7 @@ class FakeStore:
     ) -> ObjectMetadata:
         """Write deterministic bytes and report the requested version."""
         self.downloads.append(key)
-        if self.fail:
+        if self.fail or key in self.fail_keys:
             raise OSError('temporary object store failure')
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(b'fixture payload')
@@ -144,15 +143,41 @@ def test_ingress_retries_failed_materialization_and_skips_other_formats(
     unsupported = ObjectMetadata('sinan', 'notes.txt', 4, 'other')
     store = FakeStore([metadata, unsupported])
     coordinator = IngressCoordinator(sessions, store, tmp_path / 'incoming')
-    store.fail = True
-    with pytest.raises(OSError, match='temporary object store failure'):
-        coordinator.scan()
+    store.fail_keys.add(metadata.key)
+    assert coordinator.scan() == 0
     with sessions() as session:
         failed = session.scalar(select(IngressObjectRow))
         assert failed is not None and failed.status is IngressStatus.FAILED
-    store.fail = False
+    store.fail_keys.clear()
     assert coordinator.scan() == 1
     assert store.downloads == [metadata.key, metadata.key]
+    with sessions() as session:
+        retried = session.scalar(select(IngressObjectRow))
+        assert retried is not None
+        assert retried.status is IngressStatus.MATERIALIZED
+        assert retried.last_error is None
+
+
+def test_ingress_failure_does_not_block_later_objects(
+    sessions, tmp_path: Path
+) -> None:
+    """A failed object is isolated while later objects still materialize."""
+    failed = ObjectMetadata('sinan', 'failed.csv', 15, 'etag-a')
+    succeeding = ObjectMetadata('sinan', 'succeeding.csv', 15, 'etag-b')
+    store = FakeStore([failed, succeeding])
+    store.fail_keys.add(failed.key)
+
+    assert (
+        IngressCoordinator(sessions, store, tmp_path / 'incoming').scan() == 1
+    )
+    with sessions() as session:
+        rows = session.scalars(
+            select(IngressObjectRow).order_by(IngressObjectRow.object_key)
+        ).all()
+        assert [row.status for row in rows] == [
+            IngressStatus.FAILED,
+            IngressStatus.MATERIALIZED,
+        ]
 
 
 def test_ingress_rejects_object_change_during_materialization(
@@ -179,8 +204,7 @@ def test_ingress_rejects_object_change_during_materialization(
 
     store = ChangedStore([metadata])
     coordinator = IngressCoordinator(sessions, store, tmp_path / 'incoming')
-    with pytest.raises(IOError, match='changed during materialization'):
-        coordinator.scan()
+    assert coordinator.scan() == 0
     with sessions() as session:
         row = session.scalar(select(IngressObjectRow))
         assert row is not None and row.status is IngressStatus.FAILED
@@ -315,7 +339,10 @@ def test_bridge_rejects_ambiguous_external_disease_code(sessions) -> None:
     with sessions() as session:
         ingress = session.get(IngressObjectRow, object_id)
         assert ingress is not None
-        assert 'unsupported disease' in (ingress.last_error or '')
+        assert 'ambiguous disease code A92' in (ingress.last_error or '')
+        assert 'canonical A92.0 or A928 is required' in (
+            ingress.last_error or ''
+        )
         assert ingress.status is IngressStatus.MATERIALIZED
         assert session.scalars(select(OutboxEventRow)).all() == []
 

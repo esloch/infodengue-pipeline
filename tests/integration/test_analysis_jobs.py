@@ -7,11 +7,11 @@ from uuid import uuid4
 from infodengue_pipeline.db.jobs import AnalysisJobService
 from infodengue_pipeline.db.models import (
     AnalysisJobRow,
-    AnalysisJobStatus,
     WorkflowRow,
 )
 from infodengue_pipeline.models import (
     AnalysisJobResult,
+    AnalysisJobStatus,
     Coverage,
     Disease,
     Epiweek,

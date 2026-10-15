@@ -29,7 +29,12 @@ from sqlalchemy.orm import (
     relationship,
 )
 
-from infodengue_pipeline.models import Coverage, Disease, WorkflowStatus
+from infodengue_pipeline.models import (
+    AnalysisJobStatus,
+    Coverage,
+    Disease,
+    WorkflowStatus,
+)
 
 
 class Base(DeclarativeBase):
@@ -222,15 +227,6 @@ class IngressObjectRow(Base):
         DateTime(timezone=True)
     )
     last_error: Mapped[str | None] = mapped_column(String(512))
-
-
-class AnalysisJobStatus(StrEnum):
-    """Lifecycle for finite AlertaDengueAnalise OCI jobs."""
-
-    QUEUED = 'queued'
-    RUNNING = 'running'
-    SUCCEEDED = 'succeeded'
-    FAILED = 'failed'
 
 
 class AnalysisJobRow(Base):

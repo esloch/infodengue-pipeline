@@ -36,6 +36,11 @@ supplies the week, states, cores, and safe `load=false` default; it validates
 the current job's required output files. It does not import R or require a
 sibling checkout at runtime.
 
+The completed-run contract currently reports ambiguous `A92` metadata for
+canonical `A92.0` and `A928`. The pipeline rejects it; AlertaDengue must retain
+the canonical CID before BR readiness requiring chikungunya can be validated.
+UF dengue validation remains available.
+
 There is no production cutover or StorageBox ownership migration in this
 change. `BoletimQuinzenal` remains outside the scope until a concrete finite
 runner contract is implemented.

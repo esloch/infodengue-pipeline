@@ -77,6 +77,8 @@ groups:
             type: integer
             default: 1800
         run: >-
+          docker compose --env-file .env.staging
+          -f containers/compose-staging.yaml run --rm validator
           python scripts/validate_staging_e2e.py
           --object-key "${{ args.object_key }}"
           --timeout-seconds "${{ args.timeout_seconds }}"

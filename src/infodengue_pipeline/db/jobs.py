@@ -11,20 +11,34 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from infodengue_pipeline.db.models import (
     AnalysisJobRow,
-    AnalysisJobStatus,
     WorkflowRow,
 )
 from infodengue_pipeline.db.repositories import SqlWorkflowRepository
 from infodengue_pipeline.models import (
     AnalysisJobRequest,
     AnalysisJobResult,
+    AnalysisJobStatus,
     Coverage,
     Epiweek,
+    WorkflowSnapshot,
     WorkflowStatus,
 )
 from infodengue_pipeline.protocols import AnalysisRunner
 
 logger = structlog.get_logger(__name__)
+
+
+def _job_matches_current_workflow(
+    workflow: WorkflowRow,
+    snapshot: WorkflowSnapshot | None,
+    fingerprint: str,
+) -> bool:
+    """Return whether a job still owns the workflow's current inputs."""
+    return (
+        snapshot is not None
+        and snapshot.readiness.input_fingerprint == fingerprint
+        and workflow.queued_fingerprint == fingerprint
+    )
 
 
 class AnalysisJobService:
@@ -48,20 +62,17 @@ class AnalysisJobService:
     def claim_ready(self, coverage: Coverage, epiweek: Epiweek) -> UUID | None:
         """Create or reuse one job for the current ready fingerprint."""
         with self._sessions.begin() as session:
-            workflow = session.scalar(
-                select(WorkflowRow)
-                .where(
-                    WorkflowRow.coverage == coverage,
-                    WorkflowRow.epiweek == int(epiweek),
-                )
-                .with_for_update()
-            )
-            if workflow is None or workflow.status is not WorkflowStatus.READY:
-                return None
             snapshot = SqlWorkflowRepository(session).get_for_update(
                 coverage, epiweek
             )
-            if snapshot is None or not snapshot.readiness.ready:
+            if (
+                snapshot is None
+                or snapshot.status is not WorkflowStatus.READY
+                or not snapshot.readiness.ready
+            ):
+                return None
+            workflow = session.get(WorkflowRow, snapshot.workflow_id)
+            if workflow is None:
                 return None
             fingerprint = snapshot.readiness.input_fingerprint
             if fingerprint is None:
@@ -162,9 +173,8 @@ class AnalysisJobService:
             snapshot = SqlWorkflowRepository(session).get_for_update(
                 coverage, epiweek
             )
-            if (
-                snapshot is not None
-                and snapshot.readiness.input_fingerprint == fingerprint
+            if snapshot is not None and _job_matches_current_workflow(
+                workflow_row, snapshot, fingerprint
             ):
                 workflow_row.status = WorkflowStatus.RUNNING
             logger.info(
@@ -212,10 +222,8 @@ class AnalysisJobService:
                 snapshot = SqlWorkflowRepository(session).get_for_update(
                     coverage, epiweek
                 )
-                if (
-                    snapshot is not None
-                    and snapshot.readiness.input_fingerprint == fingerprint
-                    and workflow.queued_fingerprint == fingerprint
+                if _job_matches_current_workflow(
+                    workflow, snapshot, fingerprint
                 ):
                     workflow.status = (
                         WorkflowStatus.SUCCEEDED

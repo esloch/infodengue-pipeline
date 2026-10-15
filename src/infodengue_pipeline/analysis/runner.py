@@ -5,7 +5,6 @@ import subprocess  # nosec B404
 import time
 
 from pathlib import Path
-from urllib.parse import unquote
 
 import structlog
 
@@ -85,8 +84,14 @@ def analysis_argv(
 
 def validate_outputs(output_dir: Path, request: AnalysisJobRequest) -> None:
     """Require current-run state, BR, and SQL outputs from the contract."""
-    week_dir = output_dir / 'alertas' / str(request.epiweek)
-    state_outputs = list(week_dir.glob('*.RData'))
+    week = str(request.epiweek)
+    week_dir = output_dir / 'alertas' / week
+    if request.coverage.is_national:
+        state_outputs = list(week_dir.glob(f'ale-??-{week}.RData'))
+    else:
+        state_outputs = [
+            week_dir / f'ale-{request.coverage.value}-{week}.RData'
+        ]
     if not any(
         path.is_file() and path.stat().st_size > 0 for path in state_outputs
     ):
@@ -96,7 +101,14 @@ def validate_outputs(output_dir: Path, request: AnalysisJobRequest) -> None:
     )
     if not br_output.is_file() or br_output.stat().st_size == 0:
         raise ValueError('missing non-empty consolidated BR RData')
-    sql_outputs = list((output_dir / 'sql').glob('output_*.sql'))
+    sql_outputs = [
+        output_dir / 'sql' / name
+        for name in (
+            'output_dengue.sql',
+            'output_chik.sql',
+            'output_zika.sql',
+        )
+    ]
     if not any(
         path.is_file() and path.stat().st_size > 0 for path in sql_outputs
     ):
@@ -146,8 +158,8 @@ class OCIAnalysisRunner:
                 'ALERTA_DB_HOST': database.host,
                 'ALERTA_DB_PORT': str(database.port or 5432),
                 'ALERTA_DB_NAME': database.database,
-                'ALERTA_DB_USER': unquote(database.username),
-                'ALERTA_DB_PASSWORD': unquote(database.password or ''),
+                'ALERTA_DB_USER': database.username,
+                'ALERTA_DB_PASSWORD': database.password or '',
             }
         )
         log_path = output_dir / 'pipeline-runner.log'

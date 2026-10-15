@@ -45,9 +45,13 @@ network.
 
 The host-side analysis worker connects to the published pipeline ports and
 uses the same absolute analysis output path configured in the Compose
-orchestration worker. Run it with staging-specific environment overrides for
-the host PostgreSQL and RabbitMQ endpoints. The analysis container itself is
-started by that host process on the configured staging Docker network.
+orchestration worker. In the host worker environment, set
+`INFODENGUE_PIPELINE_DATABASE_URL` and `INFODENGUE_PIPELINE_RABBITMQ_URL` to
+the same staging credentials with the Compose-only hosts `postgres` and
+`rabbitmq` replaced by `localhost:5435` and `localhost:5674`. Keep the
+configured analysis network and absolute output path. The analysis container
+itself is started by that host process on the configured staging Docker
+network.
 
 The validator refuses to run unless
 `INFODENGUE_PIPELINE_ENVIRONMENT=staging`, the dedicated AlertaDengue source
@@ -56,9 +60,13 @@ fixture object key explicitly:
 
 ```sh
 uv run makim staging.validate-e2e \
-  --object-key 'approved/staging-fixture.csv' \
+  --object-key 'approved-fixtures/staging-fixture.csv' \
   --timeout-seconds 1800
 ```
+
+This runs the finite `validator` Compose service on the staging networks, so
+Docker-only hostnames resolve. It mounts the shared analysis output path to
+validate artifacts from the exact job.
 
 Use a test object explicitly approved for staging. The path must include the
 real staging MinIO, shared incoming directory, AlertaDengue watcher and
@@ -67,6 +75,12 @@ AlertaDengueAnalise OCI image. The validator waits with bounded, named stages
 for materialization, completed run correlation, readiness, job dispatch and
 success, then checks current-run artifacts. It never deletes unrelated data
 or outputs. Do not point staging settings at production.
+
+AlertaDengue currently stores ambiguous disease code `A92` for both canonical
+`A92.0` and `A928`. The pipeline rejects that value and requires the upstream
+ingestion contract to preserve the canonical CID. UF dengue E2E can be
+validated now. BR readiness requiring `A92.0` remains blocked until
+AlertaDengue is corrected.
 
 This command being implemented does not mean staging was run or passed. Report
 staging E2E as `NOT EXECUTED` until it has been run against those real

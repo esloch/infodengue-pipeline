@@ -77,6 +77,19 @@ def test_output_validation_requires_contract_artifacts_and_load_maps(
     validate_outputs(tmp_path, loaded)
 
 
+def test_output_validation_requires_selected_state_artifact(
+    tmp_path: Path,
+) -> None:
+    """An unrelated state's RData cannot satisfy a state job."""
+    write_contract_outputs(tmp_path)
+    (tmp_path / 'alertas' / '202639' / 'ale-MG-202639.RData').unlink()
+    (tmp_path / 'alertas' / '202639' / 'ale-RJ-202639.RData').write_bytes(
+        b'state'
+    )
+    with pytest.raises(ValueError, match='state RData'):
+        validate_outputs(tmp_path, request())
+
+
 def test_runner_passes_secrets_only_in_environment_and_checks_outputs(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -117,6 +130,33 @@ def test_runner_passes_secrets_only_in_environment_and_checks_outputs(
     assert seen['env']['ALERTA_DB_PASSWORD'] == 'secret@pass'
     assert seen['env']['ALERTA_DB_HOST'] == 'db.example'
     assert 'analysis:pinned' in seen['args']
+
+
+def test_runner_does_not_decode_database_password_twice(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A literal percent escape in a decoded password remains unchanged."""
+    settings = Settings(
+        _env_file=None,
+        analysis_image='analysis:test',
+        analysis_output_root=tmp_path / 'outputs',
+        alerta_database_url=(
+            'postgresql+psycopg://user:abc%2540def@db.example/alerta'
+        ),
+    )
+    seen: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        seen['env'] = kwargs['env']
+        write_contract_outputs(settings.analysis_output_root / str(job.job_id))
+        return CompletedProcess(args, 0)
+
+    job = request()
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.subprocess.run', fake_run
+    )
+    assert OCIAnalysisRunner(settings).run(job).succeeded
+    assert seen['env']['ALERTA_DB_PASSWORD'] == 'abc%40def'
 
 
 def test_runner_contains_output_path_and_handles_nonzero_or_timeout(

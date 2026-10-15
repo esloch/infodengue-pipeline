@@ -122,7 +122,13 @@ class IngestionCompletionBridge:
                 continue
             try:
                 coverage = Coverage(run.uf)
-                disease = disease_from_cid10(run.disease)
+                disease_code = run.disease.strip().upper()
+                if disease_code == 'A92':
+                    raise ValueError(
+                        'completed ingestion run has ambiguous disease code '
+                        'A92; canonical A92.0 or A928 is required'
+                    )
+                disease = disease_from_cid10(disease_code)
                 epiweek = Epiweek.parse(run.delivery_se)
             except ValueError as exc:
                 with self._sessions.begin() as session:
@@ -137,6 +143,7 @@ class IngestionCompletionBridge:
                     sha256=run.sha256,
                     run_id=str(run.run_id),
                     error_type=type(exc).__name__,
+                    error=str(exc),
                 )
                 continue
             event = IngestionCompleted.new(

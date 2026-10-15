@@ -95,7 +95,6 @@ services:
       retries: 5
     volumes:
       - pipeline_incoming:/var/lib/pipeline/incoming
-      - pipeline_canonical:/var/lib/pipeline/canonical
 
   worker-events:
     build:
@@ -187,5 +186,4 @@ volumes:
   pipeline_rabbitmq:
   pipeline_minio:
   pipeline_incoming:
-  pipeline_canonical:
   pipeline_analysis_output:

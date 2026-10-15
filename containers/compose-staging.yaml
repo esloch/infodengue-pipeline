@@ -143,10 +143,25 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import os; raise SystemExit(not any('celery' in line and 'beat' in line for line in open('/proc/1/cmdline').read().split(chr(0))))\""]
+      test:
+        - CMD
+        - python
+        - -c
+        - "raise SystemExit(0 if b'beat' in open('/proc/1/cmdline', 'rb').read() else 1)"
       interval: 15s
       timeout: 5s
       retries: 5
+
+  validator:
+    image: ${PIPELINE_IMAGE:?set pipeline image}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    command: ["python", "scripts/validate_staging_e2e.py"]
+    restart: "no"
+    networks:
+      - default
+      - staging_integrations
+    volumes:
+      - ${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}:${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}
 
 volumes:
   pipeline_staging_pgdata:
