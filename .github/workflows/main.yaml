@@ -13,18 +13,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - name: Install Python and dependencies
-        run: uv sync --extra dev
-      - name: Ruff
-        run: uv run ruff check . && uv run ruff format --check .
-      - name: Type check
-        run: uv run mypy src
-      - name: Security scan
-        run: uv run bandit -r src
-      - name: Tests
-        env:
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-        run: uv run pytest
-      - name: Build
+        run: uv sync --extra dev --locked
+      - name: Pre-commit
+        run: uv run pre-commit run --all-files
+      - name: Quality
+        run: uv run makim quality.all
+      - name: Tests and coverage
+        run: uv run makim tests.all
+      - name: Package build
         run: uv build
       - name: Documentation
-        run: uv run mkdocs build --strict
+        run: uv run makim docs.build
+      - name: Compose config
+        run: uv run makim containers.config

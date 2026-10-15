@@ -1,0 +1,8 @@
+# Staging and production composition is intentionally not deployable in Phase 0.
+x-environment-contract:
+  required-before-deployment:
+    - managed-database
+    - managed-rabbitmq
+    - approved-object-store
+
+services: {}

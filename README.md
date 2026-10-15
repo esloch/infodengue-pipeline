@@ -1,26 +1,29 @@
 # Infodengue Pipeline
 
-Infodengue Pipeline is the standalone data ingestion and workflow
-coordination service for InfoDengue.
+Standalone SINAN ingestion and workflow coordination for InfoDengue. The
+project is an experimental foundation for gradual migration; production
+ingestion continues to run in AlertaDengue. Staging E2E deployment, SINAN
+inspection, stage/merge, and analysis execution are not implemented here.
 
-**Status: Experimental / migration in progress.** Production SINAN ingestion
-still runs in AlertaDengue. This repository is the foundation for an
-incremental migration.
+## Development
 
-The intended flow is:
+Python 3.11 and `uv` are required. Docker Compose is used for local
+infrastructure.
 
-```text
-MinIO ingress → SINAN ingestion → PostgreSQL → domain event
-    → scientific analysis → artifact publication → runtime refresh
+```sh
+uv sync --extra dev --locked
+uv run pre-commit run --all-files
+uv run makim quality.all
+uv run makim tests.all
+uv run makim docs.build
 ```
 
-The project was bootstrapped with the [SciCookie OSL profile](https://github.com/osl-incubator/scicookie)
-using a `src` layout, `uv`, Click, MkDocs Material, and GitHub Actions.
+## Architecture
 
-## Local development
-
-Install Python 3.11 and `uv`, then run `uv sync`. The first implementation
-branch will add the development services and quality tasks.
+The pipeline owns orchestration state and event delivery. AlertaDengue owns
+the validated ingestion mover, stage/merge, and public runtime. See
+[architecture](docs/architecture.md), [development](docs/development.md),
+[operations](docs/operations.md), and [migration](docs/migration.md).
 
 ## License
 

@@ -1,95 +1,62 @@
 groups:
-  clean:
+  quality:
     tasks:
       all:
-        help: Clean unnecessary temporary files
-        backend: bash
+        help: Run formatting, lint, typing, and security checks
         run: |
-          rm -fr build/
-          rm -fr dist/
-          rm -fr .eggs/
-          rm -f .coverage
-          rm -fr htmlcov/
-          rm -fr .pytest_cache
-          rm -fr .mypy_cache
-          rm -fr .ruff_cache
-          find . -name '*.egg-info' -exec rm -fr {} +
-          find . -name '*.egg' -exec rm -f {} +
-          find . -name '*.pyc' -exec rm -f {} +
-          find . -name '__pycache__' -exec rm -fr {} +
-          find . -name '*.pyo' -exec rm -f {} +
-          find . -name '*~' -exec rm -f {} +
+          ruff format --check .
+          ruff check .
+          mypy src
+          bandit -r src
+          vulture src
+
+  tests:
+    tasks:
+      all:
+        help: Run the unit, contract, and integration test suites with coverage
+        run: pytest --cov=infodengue_pipeline --cov-report=term-missing --cov-fail-under=90
+      unit:
+        help: Run unit tests
+        run: pytest tests/unit
 
   docs:
     tasks:
       build:
-        help: Build documentation
-        run: |
-          mkdocs build --config-file mkdocs.yaml
+        help: Build strict documentation
+        run: mkdocs build --strict --config-file mkdocs.yaml
 
-      preview:
-        help: Preview documentation page locally
-        hooks:
-          pre-run:
-            - task: docs.build
-        run: |
-          mkdocs serve --watch docs --config-file mkdocs.yaml
-
-  tests:
+  db:
     tasks:
-      linter:
-        help: Run linter tools
-        run: |
-          pre-commit install
-          pre-commit run --all-files --verbose
+      upgrade:
+        help: Apply migrations to the configured development database
+        run: >-
+          env INFODENGUE_PIPELINE_DATABASE_URL=postgresql+psycopg://pipeline_dev:pipeline_dev_only@localhost:5434/pipeline_dev
+          alembic upgrade head
 
-      unit:
-        help: run tests
-        args:
-          path:
-            help: Specify the location of the tests
-            type: string
-            default: ""
-          params:
-            help: Specify parameters to be used for tests
-            type: string
-            default: "-vv"
-        run: |
-          pytest ${{ args.path }} ${{ args.params }}
-
-      ci:
-        help: run the sames tests executed on CI
-        hooks:
-          pre-run:
-            - task: tests.unit
-            - task: tests.linter
-
-  package:
+  containers:
     tasks:
-      build:
-        help: "Build the package"
-        run: |
-          python -m build
+      config:
+        help: Validate the development Compose configuration
+        run: docker compose --env-file .env.example -f containers/compose.yaml config --quiet
+      up:
+        help: Start development services
+        run: docker compose --env-file .env.example -f containers/compose.yaml up -d --build
+      down:
+        help: Stop development services
+        run: docker compose --env-file .env.example -f containers/compose.yaml down
 
-  release:
-    vars:
-      app: |
-        npx --yes \
-        -p semantic-release \
-        -p "@semantic-release/commit-analyzer" \
-        -p "@semantic-release/release-notes-generator" \
-        -p "@semantic-release/changelog" \
-        -p "@semantic-release/exec" \
-        -p "@semantic-release/github" \
-        -p "@semantic-release/git" \
-        -p "@google/semantic-release-replace-plugin" \
-        semantic-release
-
+  dev:
     tasks:
-      ci:
-        help: run semantic release on CI
-        run: ${{ vars.app }} --ci
+      validate:
+        help: Run the development-only service validation test
+        run: >-
+          env INFODENGUE_PIPELINE_DATABASE_URL=postgresql+psycopg://pipeline_dev:pipeline_dev_only@localhost:5434/pipeline_dev
+          INFODENGUE_PIPELINE_RABBITMQ_URL=amqp://pipeline_dev:pipeline_dev_only@localhost:5673//
+          INFODENGUE_PIPELINE_MINIO_ENDPOINT=localhost:9002
+          python scripts/validate_dev.py
 
-      dry:
-        help: run semantic release in dry-run mode
-        run: ${{ vars.app }} --dry-run
+  staging:
+    tasks:
+      validate-storage:
+        help: Validate canonical storage on the staging server's local filesystem
+        run: python scripts/validate_staging_storage.py

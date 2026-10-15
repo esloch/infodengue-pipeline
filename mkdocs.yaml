@@ -7,10 +7,10 @@ site_dir: ./build/
 #   - stylesheets/extra.css
 # Page tree
 nav:
-  - index.md
-  - Installation: installation.md
-  - Changelog: changelog.md
-  - Contributing: contributing.md
+  - Architecture: architecture.md
+  - Development: development.md
+  - Operations: operations.md
+  - Migration: migration.md
 theme:
 
   name: material

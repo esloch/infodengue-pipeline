@@ -39,10 +39,11 @@ repos:
 
       - id: mypy
         name: mypy
-        entry: mypy
+        entry: mypy src
         language: system
-        files: "src/infodengue_pipeline"
-        pass_filenames: true
+        files: ^src/infodengue_pipeline/.*\.py$
+        pass_filenames: false
+        require_serial: true
         types:
           - python
 
@@ -70,10 +71,11 @@ repos:
 
       - id: vulture
         name: vulture
-        entry: vulture
+        entry: vulture src
         language: system
-        files: "src/infodengue_pipeline"
+        files: ^src/infodengue_pipeline/.*\.py$
         description: Find unused Python code.
-        pass_filenames: true
+        pass_filenames: false
+        require_serial: true
         types:
           - python

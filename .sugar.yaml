@@ -1,0 +1,43 @@
+backend: compose
+env-file: .env.example
+
+defaults:
+  profile: ${{ env.SUGAR_PROFILE }}
+  project-name: infodengue-pipeline-${{ env.SUGAR_PROFILE }}
+
+profiles:
+  dev:
+    project-name: infodengue-pipeline-dev
+    env-file: .env.example
+    config-path: containers/compose.yaml
+    services:
+      default:
+        - postgres
+        - rabbitmq
+        - minio
+        - minio-init
+        - worker-ingestion
+        - worker-events
+        - worker-orchestration
+      available:
+        - name: postgres
+        - name: rabbitmq
+        - name: minio
+        - name: minio-init
+        - name: worker-ingestion
+        - name: worker-events
+        - name: worker-orchestration
+
+  staging:
+    project-name: infodengue-pipeline-staging-contract
+    env-file: .env.example
+    config-path: containers/compose-contract.yaml
+    services:
+      available: []
+
+  prod:
+    project-name: infodengue-pipeline-prod-contract
+    env-file: .env.example
+    config-path: containers/compose-contract.yaml
+    services:
+      available: []

@@ -28,8 +28,19 @@ classifiers = [
 
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
+scripts = { infodengue-pipeline = "infodengue_pipeline.cli:app" }
 dependencies = [
+  "alembic>=1.20.0",
+  "celery>=5.6.3",
   "click>=8.1,<9",
+  "epiweeks>=2.4.0",
+  "kombu>=5.6.2",
+  "minio>=7.2.20",
+  "psycopg[binary]>=3.3.6",
+  "pydantic>=2",
+  "pydantic-settings>=2.15.0",
+  "sqlalchemy>=2",
+  "structlog>=26.1.0",
 ]
 
 
@@ -48,6 +59,7 @@ dev = [
   "vulture>=2.7",
   "mkdocs>=1.6",
   "mkdocs-material>=9.6",
+  "containers-sugar>=1.19.3",
 ]
 
 [project.urls]
@@ -69,6 +81,10 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
 exclude = ["scripts/"]
+
+[[tool.mypy.overrides]]
+module = ["celery.*", "kombu.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = [
