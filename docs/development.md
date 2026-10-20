@@ -46,3 +46,8 @@ The real staging validator is a separate guarded operation. It requires a
 safe supplied fixture key, staging-only configuration, and live staging
 services. See [operations](operations.md). Compose starts `worker-analysis`
 with the scientific runtime and its dedicated `pipeline.analysis` queue.
+
+The AlertaDengueAnalise scientific base provides the Python 3.11 runtime.
+The analysis worker image extends that runtime with the pipeline package and
+its dependencies without replacing the scientific environment.
+
