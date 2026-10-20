@@ -15,24 +15,17 @@ completed-run bridging, outbox publication, and READY workflow dispatch. The
 four queues remain separate: `pipeline.ingestion`, `pipeline.events`,
 `pipeline.orchestration`, and `pipeline.analysis`.
 
-The analysis worker needs host access to the OCI runtime and must run outside
-the normal pipeline containers:
-
-```sh
-uv run makim analysis.worker
-uv run makim analysis.health
-```
-
-Run one worker process by default. The scientific `--cores` option controls
-state-level work inside the analysis image and is independent of Celery
-concurrency. Do not mount the Docker socket into a worker container. Keep
-`INFODENGUE_PIPELINE_ANALYSIS_LOAD=false` unless a mutating analysis is
+Compose starts `worker-analysis` on `pipeline.analysis` with Celery
+concurrency one. Its image extends the AlertaDengueAnalise image with the
+installed pipeline package and runs Makim as a child process. The scientific
+`--cores` option controls state-level work independently of Celery concurrency.
+Keep `INFODENGUE_PIPELINE_ANALYSIS_LOAD=false` unless a mutating analysis is
 explicitly approved and serialized for its database target.
 
 ## Guarded real staging E2E
 
 `containers/compose-staging.yaml` defines a separate pipeline PostgreSQL and
-RabbitMQ, three queue workers, Beat, the external staging integration
+RabbitMQ, four queue workers, Beat, the external staging integration
 network, the shared incoming bind mount, and the shared analysis output path.
 It connects to staging MinIO and AlertaDengue through that existing network;
 it does not mount sibling source trees or a Docker socket. Populate a private
@@ -40,18 +33,16 @@ it does not mount sibling source trees or a Docker socket. Populate a private
 placeholders, and set `PIPELINE_WORKER_ENV_FILE=../.env.staging`. The
 pipeline must be the only materializer for the selected staging test prefix;
 disable the existing mirror for that prefix before enabling this ingress
-worker. Point the analysis OCI `--network` setting at the existing staging
-network.
-
-The host-side analysis worker connects to the published pipeline ports and
-uses the same absolute analysis output path configured in the Compose
-orchestration worker. In the host worker environment, set
-`INFODENGUE_PIPELINE_DATABASE_URL` and `INFODENGUE_PIPELINE_RABBITMQ_URL` to
-the same staging credentials with the Compose-only hosts `postgres` and
-`rabbitmq` replaced by `localhost:5435` and `localhost:5674`. Keep the
-configured analysis network and absolute output path. The analysis container
-itself is started by that host process on the configured staging Docker
-network.
+worker. Build the analysis worker image from the reviewed AlertaDengueAnalise
+base image and set `PIPELINE_ANALYSIS_IMAGE` to that image. Keep
+`INFODENGUE_PIPELINE_ANALYSIS_IMAGE` equal to the same tag or digest so
+analysis job rows record the executing image.
+The worker joins the pipeline and staging integration networks, and mounts
+the exact output directory used by the validator. Its AlertaDengue database
+URL must point to the staging database through the integration network.
+Pipeline PostgreSQL and RabbitMQ use the unique `pipeline-postgres` and
+`pipeline-rabbitmq` aliases. Set these hostnames in the private worker env
+file so services on both networks reach the pipeline's own broker and database.
 
 The validator refuses to run unless
 `INFODENGUE_PIPELINE_ENVIRONMENT=staging`, the dedicated AlertaDengue source
@@ -76,11 +67,8 @@ for materialization, completed run correlation, readiness, job dispatch and
 success, then checks current-run artifacts. It never deletes unrelated data
 or outputs. Do not point staging settings at production.
 
-AlertaDengue currently stores ambiguous disease code `A92` for both canonical
-`A92.0` and `A928`. The pipeline rejects that value and requires the upstream
-ingestion contract to preserve the canonical CID. UF dengue E2E can be
-validated now. BR readiness requiring `A92.0` remains blocked until
-AlertaDengue is corrected.
+The pipeline rejects ambiguous legacy disease code `A92`. Current
+AlertaDengue ingestion preserves canonical CID-10 values for new runs.
 
 This command being implemented does not mean staging was run or passed. Report
 staging E2E as `NOT EXECUTED` until it has been run against those real

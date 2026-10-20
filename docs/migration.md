@@ -14,7 +14,7 @@ MinIO object
   → completed ingestion.run correlated by SHA-256
   → deterministic completion event and durable outbox
   → RabbitMQ and coverage + epiweek workflow state
-  → persisted analysis_job and host-side OCI execution
+  → persisted analysis_job and worker-analysis scientific execution
   → validated result
 ```
 
@@ -31,15 +31,13 @@ from file contents. Filenames and MinIO keys are not semantic metadata. Its
 canonical mover retains checksum deduplication, collision suffixes, existing
 file recovery, and canonical path decisions.
 
-AlertaDengueAnalise remains a finite external OCI contract. The pipeline
+AlertaDengueAnalise remains a finite scientific job contract. The pipeline
 supplies the week, states, cores, and safe `load=false` default; it validates
 the current job's required output files. It does not import R or require a
 sibling checkout at runtime.
 
-The completed-run contract currently reports ambiguous `A92` metadata for
-canonical `A92.0` and `A928`. The pipeline rejects it; AlertaDengue must retain
-the canonical CID before BR readiness requiring chikungunya can be validated.
-UF dengue validation remains available.
+The completion bridge rejects ambiguous legacy `A92` metadata. Current
+AlertaDengue ingestion retains canonical CID-10 values for new runs.
 
 There is no production cutover or StorageBox ownership migration in this
 change. `BoletimQuinzenal` remains outside the scope until a concrete finite

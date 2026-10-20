@@ -1,6 +1,10 @@
 services:
   postgres:
     image: postgres:16-alpine
+    networks:
+      default:
+        aliases:
+          - pipeline-postgres
     environment:
       POSTGRES_DB: pipeline_staging
       POSTGRES_USER: pipeline_staging
@@ -17,6 +21,10 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.13.7-management-alpine
+    networks:
+      default:
+        aliases:
+          - pipeline-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: pipeline_staging
       RABBITMQ_DEFAULT_PASS: ${PIPELINE_RABBITMQ_PASSWORD:?set staging secret}
@@ -50,6 +58,7 @@ services:
       - --loglevel=INFO
       - --queues=pipeline.ingestion
       - --hostname=worker-ingestion@%h
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +90,7 @@ services:
       - --loglevel=INFO
       - --queues=pipeline.events
       - --hostname=worker-events@%h
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -110,6 +120,7 @@ services:
       - --loglevel=INFO
       - --queues=pipeline.orchestration
       - --hostname=worker-orchestration@%h
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,6 +141,39 @@ services:
       timeout: 8s
       retries: 5
 
+  worker-analysis:
+    image: ${PIPELINE_ANALYSIS_IMAGE:?set analysis worker image}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.messaging.celery:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=pipeline.analysis
+      - --concurrency=1
+      - --hostname=worker-analysis@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+      - staging_integrations
+    volumes:
+      - ${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}:${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 --destination=worker-analysis@$$(hostname) | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 5
+    restart: unless-stopped
+
   worker-beat:
     image: ${PIPELINE_IMAGE:?set pipeline image}
     env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
@@ -142,6 +186,7 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test:
         - CMD

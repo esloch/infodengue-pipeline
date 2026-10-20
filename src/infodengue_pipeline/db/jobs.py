@@ -48,13 +48,13 @@ class AnalysisJobService:
         self,
         sessions: sessionmaker[Session],
         *,
-        image: str,
+        worker_image: str,
         cores: int,
         load: bool,
         output_root: Path,
     ) -> None:
         self._sessions = sessions
-        self._image = image
+        self._worker_image = worker_image
         self._cores = cores
         self._load = load
         self._output_root = output_root.resolve()
@@ -93,7 +93,7 @@ class AnalysisJobService:
                 workflow_id=workflow.workflow_id,
                 input_fingerprint=fingerprint,
                 status=AnalysisJobStatus.QUEUED,
-                image=self._image,
+                image=self._worker_image,
                 cores=self._cores,
                 load=self._load,
                 output_dir=str(self._output_root / str(job_id)),
@@ -194,7 +194,7 @@ class AnalysisJobService:
             if not result.succeeded:
                 failure = result.error or 'analysis runner reported failure'
         except Exception as exc:
-            failure = f'{type(exc).__name__} during OCI execution'
+            failure = f'{type(exc).__name__} during scientific execution'
 
         succeeded = result is not None and result.succeeded and not failure
         with self._sessions.begin() as session:

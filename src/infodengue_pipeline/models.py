@@ -307,7 +307,7 @@ class WorkflowSnapshot:
 
 @dataclass(frozen=True)
 class AnalysisJobRequest:
-    """Validated parameters for a future finite scientific OCI job."""
+    """Validated parameters for a finite scientific job."""
 
     job_id: UUID
     coverage: Coverage

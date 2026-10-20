@@ -40,10 +40,8 @@ class Settings(BaseSettings):
     minio_prefix: str = ''
     incoming_root: Path = Path('.local/incoming')
     alerta_database_url: SecretStr | None = None
-    analysis_image: str | None = None
+    analysis_image: str | None = None  # Executing worker image provenance.
     analysis_output_root: Path = Path('.local/analysis-output')
-    analysis_runtime: str = 'docker'
-    analysis_network: str | None = None
     analysis_cores: int = Field(default=1, ge=1, le=64)
     analysis_load: bool = False
     analysis_timeout_seconds: int = Field(default=21600, ge=1)

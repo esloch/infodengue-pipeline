@@ -448,7 +448,7 @@ def test_automated_orchestration_e2e(sessions, tmp_path: Path) -> None:
     assert workflow.status is WorkflowStatus.READY
     job_service = AnalysisJobService(
         sessions,
-        image='analysis:test',
+        worker_image='analysis:test',
         cores=1,
         load=False,
         output_root=tmp_path / 'analysis',

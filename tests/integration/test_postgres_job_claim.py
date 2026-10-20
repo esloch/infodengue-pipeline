@@ -63,7 +63,7 @@ def test_postgres_claim_creates_one_job_under_concurrent_calls(
         )
     service = AnalysisJobService(
         sessions,
-        image='test-image',
+        worker_image='test-image',
         cores=1,
         load=False,
         output_root=tmp_path,

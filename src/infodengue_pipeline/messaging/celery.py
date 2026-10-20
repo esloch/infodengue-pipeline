@@ -59,6 +59,10 @@ def create_celery_app() -> Celery:
                 'queue': 'pipeline.analysis',
                 'routing_key': 'pipeline.analysis',
             },
+            'pipeline.analysis.retry': {
+                'queue': 'pipeline.analysis',
+                'routing_key': 'pipeline.analysis',
+            },
         },
         beat_schedule={
             'scan-minio-ingress': {

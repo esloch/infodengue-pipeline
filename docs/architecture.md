@@ -9,7 +9,7 @@ AlertaDengue
 
 infodengue-pipeline
   MinIO ingress state and materialization, completion bridge, events/outbox,
-  workflow readiness, analysis job identity, scheduling, retries, OCI runner
+  workflow readiness, analysis job identity, scheduling, retries, direct runner
 
 AlertaDengueAnalise
   R / INLA computation, RData, SQL generation, optional SQL application, maps
@@ -38,7 +38,7 @@ RabbitMQ / Celery → workflow readiness by (coverage, epiweek)
   ↓
 one persisted analysis_job per current input fingerprint
   ↓
-host-side pipeline.analysis worker → AlertaDengueAnalise OCI image
+worker-analysis container → AlertaDengueAnalise runtime in the same container
   ↓
 validated current-week RData and SQL → SUCCEEDED or FAILED
 ```
@@ -62,10 +62,8 @@ optional. State input requires A90; A92.0 and A928 are optional. The newest
 per-disease input wins by `(completed_at, run_id)`. Every available supported
 input participates in the fingerprint.
 
-AlertaDengue currently collapses canonical A92.0 and A928 to `A92` in its
-completed run metadata. The completion bridge rejects that ambiguous value.
-UF dengue readiness can be validated; BR readiness requiring A92.0 cannot be
-validated until AlertaDengue preserves the canonical CID.
+AlertaDengue now preserves canonical CID-10 values in completed run metadata.
+The completion bridge rejects ambiguous legacy `A92` values.
 
 PostgreSQL row locking protects the READY-to-QUEUED transition and unique
 `(workflow_id, input_fingerprint)` constraint allows one logical analysis job.
@@ -75,19 +73,18 @@ changes workflow status only if that job still matches the current fingerprint.
 
 ## Analysis contract
 
-The host-side analysis worker runs the configured OCI image directly through
+The analysis worker runs the scientific process directly through
 `makim pipeline.refresh-alertas-job`, passing `--week`, `--states`, `--cores`,
 and `--load`. BR maps to `ALL`; a state maps to that UF. Credentials are passed
-through container environment variables and never included in argv or logs.
+through subprocess environment variables and never included in argv or logs.
 The default is `--load false`. A zero exit status is necessary but not
-sufficient: current-week per-state RData, consolidated BR RData, and at least
-one non-empty generated SQL file are validated. Maps are required only with
+sufficient: current-week per-state RData, consolidated BR RData, and both
+non-empty dengue and chikungunya SQL files are validated. Maps are required only with
 `load=true`.
 
-The `pipeline.analysis` worker runs on a host with the OCI runtime. Do not
-mount `docker.sock` into a pipeline container. Start it with
-`uv run makim analysis.worker`; check it independently with
-`uv run makim analysis.health`. Concurrency defaults to one worker process;
+The `pipeline.analysis` worker runs inside the dedicated Compose service.
+The image extends AlertaDengueAnalise with the installed pipeline package.
+No Docker socket or CLI is used at runtime. Celery concurrency is one;
 `--cores` is the separate scientific state-parallelism setting.
 
 ## Validation status

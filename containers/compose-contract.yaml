@@ -18,7 +18,7 @@ x-ownership:
   materialization: infodengue-pipeline owns the explicitly selected bucket/prefix
   incoming-directory: shared bind mount with the existing AlertaDengue watcher
   canonical-storage: AlertaDengue only
-  analysis-runtime: host-side worker; never mount docker.sock into a container
+  analysis-runtime: dedicated worker-analysis container with embedded scientific runtime
   analysis-load-default: false
 
 services: {}

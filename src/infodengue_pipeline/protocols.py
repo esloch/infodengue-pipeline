@@ -99,7 +99,7 @@ class UnitOfWork(Protocol, AbstractContextManager['UnitOfWork']):
 
 
 class AnalysisRunner(Protocol):
-    """Run AlertaDengueAnalise through its external OCI contract."""
+    """Run AlertaDengueAnalise through its finite job contract."""
 
     def run(self, _request: AnalysisJobRequest) -> AnalysisJobResult:
         """Execute one finite analysis job."""

@@ -4,7 +4,7 @@ Standalone SINAN ingress coordination and finite AlertaDengueAnalise job
 orchestration for InfoDengue. AlertaDengue remains the authority for content
 inspection, canonical movement, manifest creation, stage, merge, and rollback.
 This repository coordinates MinIO ingress, completion events, readiness,
-durable analysis job state, and OCI execution.
+durable analysis job state, and containerized scientific execution.
 
 ```text
 MinIO
@@ -21,7 +21,7 @@ RabbitMQ / Celery and coverage + epiweek readiness
   ↓
 one analysis_job per fingerprint
   ↓
-AlertaDengueAnalise finite OCI job
+worker-analysis with the AlertaDengueAnalise scientific runtime
   ↓
 validated RData and SQL output
 ```

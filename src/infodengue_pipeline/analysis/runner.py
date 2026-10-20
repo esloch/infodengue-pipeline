@@ -1,6 +1,7 @@
-"""Finite OCI execution for the AlertaDengueAnalise public job contract."""
+"""Finite in-container execution of the scientific job contract."""
 
 import os
+import signal
 import subprocess  # nosec B404
 import time
 
@@ -24,7 +25,7 @@ class AnalysisDisabledError(RuntimeError):
 
 
 class DisabledAnalysisRunner:
-    """Reject analysis when an operator has not configured an OCI image."""
+    """Reject analysis when execution is explicitly disabled."""
 
     def run(self, request: AnalysisJobRequest) -> AnalysisJobResult:
         """Reject execution while preserving the AnalysisRunner contract."""
@@ -35,51 +36,43 @@ class DisabledAnalysisRunner:
 
 def analysis_argv(
     request: AnalysisJobRequest,
-    image: str,
-    output_dir: Path,
-    runtime: str = 'docker',
-    network: str | None = None,
 ) -> list[str]:
-    """Build direct argv for one analysis container invocation."""
-    args = [runtime, 'run', '--rm']
-    if network:
-        args.extend(['--network', network])
-    args.extend(
-        [
-            '--volume',
-            f'{output_dir.resolve()}:/outputs',
-            '--env',
-            'ALERTA_OUT_DIR=/outputs',
-            '--env',
-            f'ALERTA_JOB_ID={request.job_id}',
-            '--env',
-            f'ALERTA_INPUT_FINGERPRINT={request.input_fingerprint}',
-        ]
-    )
-    for name in (
-        'ALERTA_DB_HOST',
-        'ALERTA_DB_PORT',
-        'ALERTA_DB_NAME',
-        'ALERTA_DB_USER',
-        'ALERTA_DB_PASSWORD',
-    ):
-        args.extend(['--env', name])
-    args.extend(
-        [
-            image,
-            'makim',
-            'pipeline.refresh-alertas-job',
-            '--week',
-            str(request.epiweek),
-            '--states',
-            ','.join(request.states),
-            '--cores',
-            str(request.cores),
-            '--load',
-            'true' if request.load else 'false',
-        ]
-    )
-    return args
+    """Build argv for the Makim process in the current container."""
+    return [
+        'makim',
+        'pipeline.refresh-alertas-job',
+        '--week',
+        str(request.epiweek),
+        '--states',
+        ','.join(request.states),
+        '--cores',
+        str(request.cores),
+        '--load',
+        'true' if request.load else 'false',
+    ]
+
+
+def run_scientific_process(
+    args: list[str], env: dict[str, str], log_path: Path, timeout: int
+) -> int:
+    """Run and bound the entire Makim/R process group."""
+    with log_path.open('ab') as log:
+        process = subprocess.Popen(  # nosec B603
+            args,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=env,
+            start_new_session=True,
+        )
+        try:
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise
 
 
 def validate_outputs(output_dir: Path, request: AnalysisJobRequest) -> None:
@@ -123,8 +116,8 @@ def validate_outputs(output_dir: Path, request: AnalysisJobRequest) -> None:
             raise ValueError('missing non-empty incidence map output')
 
 
-class OCIAnalysisRunner:
-    """Execute the pinned image through a local OCI runtime."""
+class InContainerAnalysisRunner:
+    """Execute the scientific process in the analysis worker container."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
@@ -132,9 +125,6 @@ class OCIAnalysisRunner:
     def run(self, request: AnalysisJobRequest) -> AnalysisJobResult:
         """Run the finite job and validate exit status plus artifacts."""
         settings = self._settings
-        image = request.image or settings.analysis_image
-        if not image:
-            raise ValueError('analysis image is not configured')
         root = settings.analysis_output_root.resolve()
         output_dir = (
             request.output_dir or (root / str(request.job_id))
@@ -142,13 +132,7 @@ class OCIAnalysisRunner:
         if not output_dir.is_relative_to(root):
             raise ValueError('analysis output escapes configured root')
         output_dir.mkdir(parents=True, exist_ok=True)
-        args = analysis_argv(
-            request,
-            image,
-            output_dir,
-            settings.analysis_runtime,
-            settings.analysis_network,
-        )
+        args = analysis_argv(request)
         env = os.environ.copy()
         if settings.alerta_database_url is None:
             raise ValueError('AlertaDengue database URL is not configured')
@@ -162,6 +146,9 @@ class OCIAnalysisRunner:
                 'ALERTA_DB_NAME': database.database,
                 'ALERTA_DB_USER': database.username,
                 'ALERTA_DB_PASSWORD': database.password or '',
+                'ALERTA_OUT_DIR': str(output_dir),
+                'ALERTA_JOB_ID': str(request.job_id),
+                'ALERTA_INPUT_FINGERPRINT': request.input_fingerprint,
             }
         )
         log_path = output_dir / 'pipeline-runner.log'
@@ -174,32 +161,26 @@ class OCIAnalysisRunner:
             input_fingerprint=request.input_fingerprint,
             coverage=request.coverage.value,
             epiweek=str(request.epiweek),
-            analysis_image=image,
+            analysis_image=request.image or settings.analysis_image,
         )
         started = time.monotonic()
         try:
-            with log_path.open('ab') as log:
-                completed = subprocess.run(  # nosec B603
-                    args,
-                    check=False,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    timeout=settings.analysis_timeout_seconds,
-                    env=env,
-                )
-            if completed.returncode != 0:
+            exit_code = run_scientific_process(
+                args, env, log_path, settings.analysis_timeout_seconds
+            )
+            if exit_code != 0:
                 logger.warning(
                     'analysis_job_failed',
                     job_id=str(request.job_id),
-                    exit_code=completed.returncode,
+                    exit_code=exit_code,
                     duration_seconds=round(time.monotonic() - started, 3),
                 )
                 return AnalysisJobResult(
                     request.job_id,
                     output_dir,
                     False,
-                    completed.returncode,
-                    'analysis container exited non-zero',
+                    exit_code,
+                    'scientific process exited non-zero',
                 )
             validate_outputs(output_dir, request)
             logger.info(
@@ -220,12 +201,14 @@ class OCIAnalysisRunner:
                 request.job_id, output_dir, False, 124, 'analysis timed out'
             )
         except (OSError, ValueError) as exc:
+            # Exception text may include secrets; retain only the type.
             with log_path.open('ab') as log:
-                log.write(f'{type(exc).__name__}: {exc}\n'.encode())
+                message = f'{type(exc).__name__} during analysis execution\n'
+                log.write(message.encode())
             return AnalysisJobResult(
                 request.job_id,
                 output_dir,
                 False,
                 None,
-                f'{type(exc).__name__}: {exc}'[:512],
+                f'{type(exc).__name__} during analysis execution',
             )

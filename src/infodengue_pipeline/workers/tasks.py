@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from uuid import UUID
 
-from infodengue_pipeline.analysis.runner import OCIAnalysisRunner
+from infodengue_pipeline.analysis.runner import InContainerAnalysisRunner
 from infodengue_pipeline.config import Settings, get_settings
 from infodengue_pipeline.db.engine import session_factory, unit_of_work
 from infodengue_pipeline.db.jobs import AnalysisJobService
@@ -45,7 +45,7 @@ def _analysis_jobs(settings: Settings | None = None) -> AnalysisJobService:
         raise ValueError('analysis image is not configured')
     return AnalysisJobService(
         session_factory(),
-        image=config.analysis_image,
+        worker_image=config.analysis_image,
         cores=config.analysis_cores,
         load=config.analysis_load,
         output_root=config.analysis_output_root,
@@ -176,7 +176,7 @@ def run_analysis(job_id: str) -> bool:
     settings = get_settings()
     configure_logging(settings.log_level)
     return _analysis_jobs(settings).execute(
-        UUID(job_id), OCIAnalysisRunner(settings)
+        UUID(job_id), InContainerAnalysisRunner(settings)
     )
 
 

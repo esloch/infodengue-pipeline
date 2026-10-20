@@ -50,7 +50,7 @@ def test_analysis_job_claim_run_duplicate_and_explicit_retry(
     ready_workflow(work_factory, completed_event)
     service = AnalysisJobService(
         sessions,
-        image='analysis:test',
+        worker_image='analysis:test',
         cores=2,
         load=False,
         output_root=tmp_path,
@@ -86,7 +86,7 @@ def test_old_job_completion_does_not_replace_newer_ready_fingerprint(
     ready_workflow(work_factory, completed_event)
     service = AnalysisJobService(
         sessions,
-        image='analysis:test',
+        worker_image='analysis:test',
         cores=1,
         load=False,
         output_root=tmp_path,

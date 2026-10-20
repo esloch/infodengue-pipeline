@@ -1,14 +1,15 @@
-"""Public OCI argv, secret environment and artifact contract tests."""
+"""In-container command, secret environment and artifact contract tests."""
 
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import TimeoutExpired
 from uuid import uuid4
 
 import pytest
 
 from infodengue_pipeline.analysis.runner import (
-    OCIAnalysisRunner,
+    InContainerAnalysisRunner,
     analysis_argv,
+    run_scientific_process,
     validate_outputs,
 )
 from infodengue_pipeline.config import Settings
@@ -39,11 +40,9 @@ def write_contract_outputs(root: Path, week: str = '202639') -> None:
 
 
 def test_argv_maps_br_and_state_scope_without_shell() -> None:
-    """OCI args exactly use finite public entrypoint and safe defaults."""
-    state_args = analysis_argv(request(), 'image:tag', Path('/tmp/out'))
-    national_args = analysis_argv(
-        request(Coverage.BR), 'image:tag', Path('/tmp/out')
-    )
+    """Direct args use the finite public entrypoint and safe defaults."""
+    state_args = analysis_argv(request())
+    national_args = analysis_argv(request(Coverage.BR))
     assert 'MG' in state_args
     assert 'ALL' in national_args
     assert state_args[-10:] == [
@@ -60,6 +59,8 @@ def test_argv_maps_br_and_state_scope_without_shell() -> None:
     ]
     assert state_args[-2:] == ['--load', 'false']
     assert 'sh' not in state_args
+    assert 'docker' not in state_args
+    assert analysis_argv(request(load=True))[-2:] == ['--load', 'true']
 
 
 def test_output_validation_requires_contract_artifacts_and_load_maps(
@@ -149,11 +150,11 @@ def test_runner_passes_secrets_only_in_environment_and_checks_outputs(
     )
     seen = {}
 
-    def fake_run(args, **kwargs):
+    def fake_run(args, env, _log_path, _timeout):
         seen['args'] = args
-        seen['env'] = kwargs['env']
+        seen['env'] = env
         write_contract_outputs(settings.analysis_output_root / str(job.job_id))
-        return CompletedProcess(args, 0)
+        return 0
 
     job = request()
     job = job.__class__(
@@ -166,15 +167,18 @@ def test_runner_passes_secrets_only_in_environment_and_checks_outputs(
         image='analysis:pinned',
     )
     monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.subprocess.run', fake_run
+        'infodengue_pipeline.analysis.runner.run_scientific_process', fake_run
     )
-    result = OCIAnalysisRunner(settings).run(job)
+    result = InContainerAnalysisRunner(settings).run(job)
     assert result.succeeded
     assert 'secret@pass' not in ' '.join(seen['args'])
-    assert 'ALERTA_DB_PASSWORD' in seen['args']
+    assert 'ALERTA_DB_PASSWORD' not in seen['args']
     assert seen['env']['ALERTA_DB_PASSWORD'] == 'secret@pass'
     assert seen['env']['ALERTA_DB_HOST'] == 'db.example'
-    assert 'analysis:pinned' in seen['args']
+    assert 'analysis:pinned' not in seen['args']
+    assert seen['env']['ALERTA_OUT_DIR'] == str(result.output_dir)
+    assert seen['env']['ALERTA_JOB_ID'] == str(job.job_id)
+    assert seen['env']['ALERTA_INPUT_FINGERPRINT'] == 'fingerprint'
 
 
 def test_runner_does_not_decode_database_password_twice(
@@ -191,23 +195,23 @@ def test_runner_does_not_decode_database_password_twice(
     )
     seen: dict[str, object] = {}
 
-    def fake_run(args, **kwargs):
-        seen['env'] = kwargs['env']
+    def fake_run(_args, env, _log_path, _timeout):
+        seen['env'] = env
         write_contract_outputs(settings.analysis_output_root / str(job.job_id))
-        return CompletedProcess(args, 0)
+        return 0
 
     job = request()
     monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.subprocess.run', fake_run
+        'infodengue_pipeline.analysis.runner.run_scientific_process', fake_run
     )
-    assert OCIAnalysisRunner(settings).run(job).succeeded
+    assert InContainerAnalysisRunner(settings).run(job).succeeded
     assert seen['env']['ALERTA_DB_PASSWORD'] == 'abc%40def'
 
 
 def test_runner_contains_output_path_and_handles_nonzero_or_timeout(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """OCI paths stay below root and process failure is authoritative."""
+    """Output paths stay below root and process failure is authoritative."""
     root = tmp_path / 'out'
     settings = Settings(
         _env_file=None,
@@ -226,27 +230,66 @@ def test_runner_contains_output_path_and_handles_nonzero_or_timeout(
         tmp_path / '..' / 'outside',
     )
 
-    def unexpected(_args, **_kwargs):
+    def unexpected(_args, _env, _log_path, _timeout):
         raise AssertionError('runner invoked outside output root')
 
     monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.subprocess.run', unexpected
+        'infodengue_pipeline.analysis.runner.run_scientific_process',
+        unexpected,
     )
     with pytest.raises(ValueError, match='escapes configured root'):
-        OCIAnalysisRunner(settings).run(outside)
+        InContainerAnalysisRunner(settings).run(outside)
 
-    def fail(_args, **_kwargs):
-        return CompletedProcess([], 7)
-
-    monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.subprocess.run', fail
-    )
-    assert not OCIAnalysisRunner(settings).run(job).succeeded
-
-    def timeout(_args, **_kwargs):
-        raise __import__('subprocess').TimeoutExpired('docker', 1)
+    def fail(_args, _env, _log_path, _timeout):
+        return 7
 
     monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.subprocess.run', timeout
+        'infodengue_pipeline.analysis.runner.run_scientific_process', fail
     )
-    assert not OCIAnalysisRunner(settings).run(job).succeeded
+    result = InContainerAnalysisRunner(settings).run(job)
+    assert not result.succeeded
+    assert result.exit_code == 7
+
+    def timeout(_args, _env, _log_path, _timeout):
+        raise TimeoutExpired('makim', 1)
+
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.run_scientific_process',
+        timeout,
+    )
+    result = InContainerAnalysisRunner(settings).run(job)
+    assert not result.succeeded
+    assert result.exit_code == 124
+
+
+def test_timeout_kills_scientific_process_group(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A timed out Makim launcher cannot leave R descendants running."""
+    seen: list[object] = []
+
+    class FakeProcess:
+        pid = 321
+
+        def wait(self, timeout=None):
+            seen.append(timeout)
+            if timeout is not None:
+                raise TimeoutExpired('makim', timeout)
+            return -9
+
+    def fake_popen(_args, **kwargs):
+        assert kwargs['start_new_session'] is True
+        return FakeProcess()
+
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.subprocess.Popen', fake_popen
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.os.killpg',
+        lambda pid, sig: seen.append((pid, sig)),
+    )
+    with pytest.raises(TimeoutExpired):
+        run_scientific_process(
+            analysis_argv(request()), {}, tmp_path / 'log', 5
+        )
+    assert seen == [5, (321, __import__('signal').SIGKILL), None]
