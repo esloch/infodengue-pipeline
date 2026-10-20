@@ -31,7 +31,8 @@ existing AlertaDengue MinIO service on that network; it does not mount sibling
 source trees or a Docker socket. Populate private `.env.staging` and
 `.env.staging.analysis` files from the tracked templates. Only
 `worker-analysis` receives `PIPELINE_ANALYSIS_ENV_FILE` and the analysis DB
-credential. The core file contains the read-only source database URL.
+credential `INFODENGUE_PIPELINE_ANALYSIS_DATABASE_URL`. The core file contains
+the read-only `INFODENGUE_PIPELINE_ALERTA_SOURCE_DATABASE_URL`.
 Provision dedicated MinIO service credentials with read/list access limited
 to the selected bucket/prefix; credential provisioning remains a deployment
 concern.

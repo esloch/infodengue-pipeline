@@ -87,8 +87,9 @@ non-empty dengue and chikungunya SQL files are validated. Maps are required only
 `load=true`.
 
 The completion bridge and staging validator use only
-`ALERTA_SOURCE_DATABASE_URL` to read completed ingestion runs. The scientific
-runner uses only `ANALYSIS_DATABASE_URL` to pass target settings to Makim.
+`INFODENGUE_PIPELINE_ALERTA_SOURCE_DATABASE_URL` to read completed ingestion
+runs. The scientific runner uses only
+`INFODENGUE_PIPELINE_ANALYSIS_DATABASE_URL` to pass target settings to Makim.
 There is no fallback between the database roles. A `load=true` job takes a
 session-scoped PostgreSQL advisory lock derived from the target database
 name. The lock spans the finite scientific process and is released on normal

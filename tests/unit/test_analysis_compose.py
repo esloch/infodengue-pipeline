@@ -98,6 +98,22 @@ def test_staging_worker_env_and_output_mounts_are_isolated() -> None:
     )
 
 
+def test_staging_env_file_template_and_ci_paths_are_distinct() -> None:
+    """Copied operator config uses private files while CI renders templates."""
+    template = Path('.env.staging.example').read_text()
+    compose = Path('containers/compose-staging.yaml').read_text()
+    makim = Path('.makim.yaml').read_text()
+
+    assert 'PIPELINE_WORKER_ENV_FILE=../.env.staging\n' in template
+    assert 'PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis\n' in template
+    assert '${PIPELINE_WORKER_ENV_FILE:-../.env.staging}' in compose
+    assert '${PIPELINE_ANALYSIS_ENV_FILE:-../.env.staging.analysis}' in compose
+    assert 'env PIPELINE_WORKER_ENV_FILE=../.env.staging.example' in makim
+    assert (
+        'PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis.example' in makim
+    )
+
+
 def test_obsolete_runtime_settings_are_rejected() -> None:
     """Docker launch settings are outside the validated runtime contract."""
     from infodengue_pipeline.config import Settings

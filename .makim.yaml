@@ -41,6 +41,8 @@ groups:
       staging-config:
         help: Validate the staging topology using placeholders only
         run: >-
+          env PIPELINE_WORKER_ENV_FILE=../.env.staging.example
+          PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis.example
           docker compose --env-file .env.staging.example
           -f containers/compose-staging.yaml config --quiet
       up:
