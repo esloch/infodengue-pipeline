@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: AlertaDengue/AlertaDengueAnalise
-          ref: 8dd6bdd3a02fa43fcc6f30a1a945f02c6aeccc0c
+          ref: 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
           path: analysis-source
       - name: Build pinned scientific base image
         run: >-
