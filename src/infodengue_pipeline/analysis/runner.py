@@ -5,11 +5,16 @@ import signal
 import subprocess  # nosec B404
 import time
 
+from contextlib import contextmanager, nullcontext
+from hashlib import sha256
 from pathlib import Path
+from typing import Iterator
 
 import structlog
 
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.pool import NullPool
 
 from infodengue_pipeline.config import Settings, get_settings
 from infodengue_pipeline.models import (
@@ -18,6 +23,60 @@ from infodengue_pipeline.models import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+class AnalysisLoadLockTimeout(RuntimeError):
+    """Raised when another load=true job holds the database lock too long."""
+
+
+def _database_lock_key(database: str) -> int:
+    """Derive one stable signed PostgreSQL advisory-lock key from DB name."""
+    value = int.from_bytes(sha256(database.encode()).digest()[:8], 'big')
+    return value - (1 << 64) if value >= (1 << 63) else value
+
+
+@contextmanager
+def _analysis_load_lock(
+    database_url: str, timeout_seconds: int
+) -> Iterator[None]:
+    """Serialize mutating analyses against the same PostgreSQL database."""
+    database = make_url(database_url).database
+    if not database:
+        raise ValueError('analysis database URL has no database name')
+    key = _database_lock_key(database)
+    engine = create_engine(
+        database_url,
+        poolclass=NullPool,
+        hide_parameters=True,
+    )
+    connection = engine.connect()
+    acquired = False
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            acquired = bool(
+                connection.execute(
+                    text('SELECT pg_try_advisory_lock(:key)'), {'key': key}
+                ).scalar_one()
+            )
+            connection.commit()
+            if acquired:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AnalysisLoadLockTimeout
+            time.sleep(min(1.0, remaining))
+        yield
+    finally:
+        try:
+            if acquired:
+                connection.execute(
+                    text('SELECT pg_advisory_unlock(:key)'), {'key': key}
+                )
+                connection.commit()
+        finally:
+            connection.close()
+            engine.dispose()
 
 
 class AnalysisDisabledError(RuntimeError):
@@ -134,11 +193,12 @@ class InContainerAnalysisRunner:
         output_dir.mkdir(parents=True, exist_ok=True)
         args = analysis_argv(request)
         env = os.environ.copy()
-        if settings.alerta_database_url is None:
-            raise ValueError('AlertaDengue database URL is not configured')
-        database = make_url(settings.alerta_database_url.get_secret_value())
+        if settings.analysis_database_url is None:
+            raise ValueError('analysis database URL is not configured')
+        database_url = settings.analysis_database_url.get_secret_value()
+        database = make_url(database_url)
         if not database.host or not database.database or not database.username:
-            raise ValueError('AlertaDengue database URL is incomplete')
+            raise ValueError('analysis database URL is incomplete')
         env.update(
             {
                 'ALERTA_DB_HOST': database.host,
@@ -165,9 +225,19 @@ class InContainerAnalysisRunner:
         )
         started = time.monotonic()
         try:
-            exit_code = run_scientific_process(
-                args, env, log_path, settings.analysis_timeout_seconds
+            lock = (
+                _analysis_load_lock(
+                    database_url, settings.analysis_load_lock_timeout_seconds
+                )
+                if request.load
+                else nullcontext()
             )
+            with lock:
+                exit_code = run_scientific_process(
+                    args, env, log_path, settings.analysis_timeout_seconds
+                )
+                if exit_code == 0:
+                    validate_outputs(output_dir, request)
             if exit_code != 0:
                 logger.warning(
                     'analysis_job_failed',
@@ -182,7 +252,6 @@ class InContainerAnalysisRunner:
                     exit_code,
                     'scientific process exited non-zero',
                 )
-            validate_outputs(output_dir, request)
             logger.info(
                 'analysis_job_succeeded',
                 job_id=str(request.job_id),
@@ -200,11 +269,35 @@ class InContainerAnalysisRunner:
             return AnalysisJobResult(
                 request.job_id, output_dir, False, 124, 'analysis timed out'
             )
+        except AnalysisLoadLockTimeout:
+            logger.warning(
+                'analysis_load_lock_timed_out', job_id=str(request.job_id)
+            )
+            return AnalysisJobResult(
+                request.job_id,
+                output_dir,
+                False,
+                75,
+                'analysis database load lock timed out',
+            )
         except (OSError, ValueError) as exc:
             # Exception text may include secrets; retain only the type.
             with log_path.open('ab') as log:
                 message = f'{type(exc).__name__} during analysis execution\n'
                 log.write(message.encode())
+            return AnalysisJobResult(
+                request.job_id,
+                output_dir,
+                False,
+                None,
+                f'{type(exc).__name__} during analysis execution',
+            )
+        except Exception as exc:
+            logger.error(
+                'analysis_execution_error',
+                job_id=str(request.job_id),
+                error_type=type(exc).__name__,
+            )
             return AnalysisJobResult(
                 request.job_id,
                 output_dir,

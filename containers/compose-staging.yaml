@@ -57,6 +57,7 @@ services:
       - worker
       - --loglevel=INFO
       - --queues=pipeline.ingestion
+      - --concurrency=1
       - --hostname=worker-ingestion@%h
     restart: unless-stopped
     depends_on:
@@ -131,8 +132,6 @@ services:
     networks:
       - default
       - staging_integrations
-    volumes:
-      - ${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}:${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}
     healthcheck:
       test:
         - CMD-SHELL
@@ -143,7 +142,7 @@ services:
 
   worker-analysis:
     image: ${PIPELINE_ANALYSIS_IMAGE:?set analysis worker image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    env_file: ${PIPELINE_ANALYSIS_ENV_FILE:-../.env.staging.analysis}
     command:
       - celery
       - -A
@@ -164,7 +163,7 @@ services:
       - default
       - staging_integrations
     volumes:
-      - ${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}:${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}
+      - ${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
     healthcheck:
       test:
         - CMD-SHELL
@@ -206,7 +205,7 @@ services:
       - default
       - staging_integrations
     volumes:
-      - ${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}:${INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT:?set shared analysis output root}
+      - ${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
 
 volumes:
   pipeline_staging_pgdata:

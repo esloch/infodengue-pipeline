@@ -90,6 +90,7 @@ services:
       - worker
       - --loglevel=INFO
       - --queues=pipeline.ingestion
+      - --concurrency=1
       - --hostname=worker-ingestion@%h
     restart: unless-stopped
     depends_on:
@@ -124,6 +125,9 @@ services:
       - --queues=pipeline.events
       - --hostname=worker-events@%h
     restart: unless-stopped
+    networks:
+      - default
+      - dev_integrations
     depends_on:
       postgres:
         condition: service_healthy
@@ -202,7 +206,7 @@ services:
       dockerfile: containers/Dockerfile.analysis
       args:
         ALERTA_ANALYSIS_BASE_IMAGE: ${ALERTA_ANALYSIS_BASE_IMAGE:-alertadengueanalise:dev-container-worker}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.example}
+    env_file: ${PIPELINE_ANALYSIS_ENV_FILE:-../.env.analysis.example}
     command:
       - celery
       - -A

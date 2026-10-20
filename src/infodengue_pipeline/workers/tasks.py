@@ -107,11 +107,13 @@ def bridge_completed(limit: int = 100) -> int:
     """Poll completed AlertaDengue runs and persist deterministic events."""
     settings = get_settings()
     configure_logging(settings.log_level)
-    if settings.alerta_database_url is None:
+    if settings.alerta_source_database_url is None:
         return 0
     return IngestionCompletionBridge(
         session_factory(),
-        _completed_source(settings.alerta_database_url.get_secret_value()),
+        _completed_source(
+            settings.alerta_source_database_url.get_secret_value()
+        ),
     ).poll(limit)
 
 

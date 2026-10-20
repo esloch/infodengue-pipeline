@@ -24,28 +24,43 @@ explicitly approved and serialized for its database target.
 
 ## Guarded real staging E2E
 
-`containers/compose-staging.yaml` defines a separate pipeline PostgreSQL and
-RabbitMQ, four queue workers, Beat, the external staging integration
-network, the shared incoming bind mount, and the shared analysis output path.
-It connects to staging MinIO and AlertaDengue through that existing network;
-it does not mount sibling source trees or a Docker socket. Populate a private
-`.env.staging` from the `../.env.staging.example` template, replace all
-placeholders, and set `PIPELINE_WORKER_ENV_FILE=../.env.staging`. The
-pipeline must be the only materializer for the selected staging test prefix;
-disable the existing mirror for that prefix before enabling this ingress
-worker. Build the analysis worker image from the reviewed AlertaDengueAnalise
+`containers/compose-staging.yaml` defines pipeline PostgreSQL and RabbitMQ,
+queue workers, Beat, the external staging integration network, the shared
+incoming bind mount, and shared analysis artifacts. It connects to the
+existing AlertaDengue MinIO service on that network; it does not mount sibling
+source trees or a Docker socket. Populate private `.env.staging` and
+`.env.staging.analysis` files from the tracked templates. Only
+`worker-analysis` receives `PIPELINE_ANALYSIS_ENV_FILE` and the analysis DB
+credential. The core file contains the read-only source database URL.
+Provision dedicated MinIO service credentials with read/list access limited
+to the selected bucket/prefix; credential provisioning remains a deployment
+concern.
+
+Staging MinIO uses `minio:9000` over HTTP, bucket `sinan-infodengue`, and
+pipeline prefix `approved-fixtures/`. Set the AlertaDengue deployment value
+`MINIO_MATERIALIZER_EXCLUDE=approved-fixtures/*` so its legacy full-bucket
+mirror excludes this pipeline-owned prefix. If unset or empty, the existing
+mirror command remains unchanged.
+
+`STAGING_ANALYSIS_OUTPUT_HOST_PATH` maps on the VPS to
+`/var/lib/pipeline/analysis-output` in `worker-analysis` and `validator`.
+`worker-orchestration` stores deterministic output path strings and does not
+mount the artifacts. Keep `worker-ingestion` at one replica and
+`--concurrency=1`; horizontal materialization requires durable claim leases.
+
+Build the analysis worker image from the reviewed AlertaDengueAnalise
 base image and set `PIPELINE_ANALYSIS_IMAGE` to that image. Keep
 `INFODENGUE_PIPELINE_ANALYSIS_IMAGE` equal to the same tag or digest so
 analysis job rows record the executing image.
-The worker joins the pipeline and staging integration networks, and mounts
-the exact output directory used by the validator. Its AlertaDengue database
-URL must point to the staging database through the integration network.
+The analysis database URL points to the scientific target through the
+integration network. The completion source URL is only used to read
+`ingestion.run`.
 Pipeline PostgreSQL and RabbitMQ use the unique `pipeline-postgres` and
 `pipeline-rabbitmq` aliases. Set these hostnames in the private worker env
 file so services on both networks reach the pipeline's own broker and database.
 
 The validator refuses to run unless
-`INFODENGUE_PIPELINE_ENVIRONMENT=staging`, the dedicated AlertaDengue source
+`INFODENGUE_PIPELINE_ENVIRONMENT=staging`, the read-only AlertaDengue source
 database is configured, and analysis loading is disabled. Supply a safe
 fixture object key explicitly:
 
@@ -85,7 +100,10 @@ Analysis jobs with status `FAILED` can be explicitly retried using the
 logical job is reused. Do not reset jobs that remain `RUNNING` after worker
 loss automatically; inspect the output directory and database effects first,
 then make an operator decision. This is particularly important for any
-explicit `load=true` execution.
+explicit `load=true` execution. Mutating analyses hold a PostgreSQL advisory
+lock scoped to the target database for the full scientific process, waiting
+at most `INFODENGUE_PIPELINE_ANALYSIS_LOAD_LOCK_TIMEOUT_SECONDS` (default 900
+seconds). Read-only `load=false` jobs do not acquire this lock.
 
 Inspect structured logs using `object_id`, `sha256`, `run_id`, `event_id`,
 `coverage`, `epiweek`, `input_fingerprint`, and `job_id`. Secrets and database

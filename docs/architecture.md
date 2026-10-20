@@ -49,6 +49,10 @@ destination below `incoming_root`; key contents never become a filesystem
 path. The materializer computes the downloaded file SHA-256 used by
 `ingestion.run.sha256`.
 
+`worker-ingestion` runs with one Celery process and must remain a single
+replica while filesystem materialization lacks a persistent claim lease.
+Horizontal ingress scaling requires a durable claim/lease lifecycle.
+
 The completion adapter reads only `ingestion.run` fields and does not import
 the AlertaDengue application. Only `status=completed` creates an
 `IngestionCompleted` event. The deterministic event UUID and outbox primary
@@ -82,10 +86,42 @@ sufficient: current-week per-state RData, consolidated BR RData, and both
 non-empty dengue and chikungunya SQL files are validated. Maps are required only with
 `load=true`.
 
+The completion bridge and staging validator use only
+`ALERTA_SOURCE_DATABASE_URL` to read completed ingestion runs. The scientific
+runner uses only `ANALYSIS_DATABASE_URL` to pass target settings to Makim.
+There is no fallback between the database roles. A `load=true` job takes a
+session-scoped PostgreSQL advisory lock derived from the target database
+name. The lock spans the finite scientific process and is released on normal
+completion, process failure, timeout, or connection close.
+
 The `pipeline.analysis` worker runs inside the dedicated Compose service.
 The image extends AlertaDengueAnalise with the installed pipeline package.
 No Docker socket or CLI is used at runtime. Celery concurrency is one;
 `--cores` is the separate scientific state-parallelism setting.
+
+## Scaling boundary
+
+The supported topology is one VPS / Docker host, with durable PostgreSQL and
+RabbitMQ state and isolated analysis output directories on a local filesystem.
+`load=false` can use multiple analysis workers only when they share that
+filesystem. Multi-host workers require a shared filesystem or a defined
+object-storage artifact contract. Horizontal ingress materialization is not
+supported until persistent claims/leases are implemented.
+
+## Future consumers
+
+No downstream analysis completion event is emitted speculatively. Once a
+real consumer and event contract exist, publish a versioned event such as
+`analysis.succeeded` through the transactional outbox.
+
+BoletimQuinzenal is not currently a finite orchestratable job. Before adding a
+pipeline workload, it needs an explicit week and scope, noninteractive auth,
+image-contained dependencies, no runtime package installs or sibling paths,
+environment/secret-mounted credentials, a deterministic output directory,
+clear exit status, finite single-invocation execution, and rendering
+separated from explicitly enabled publication. Only then should the pipeline
+add a bulletin queue, persisted job, and worker image. See
+[future workload contract](future-workloads.md).
 
 ## Validation status
 

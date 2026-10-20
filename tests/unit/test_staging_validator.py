@@ -157,7 +157,7 @@ def test_validator_requires_fixture_prefix_and_load_false() -> None:
         _env_file=None,
         environment='staging',
         minio_prefix='approved-fixtures/',
-        alerta_database_url='postgresql://readonly:secret@source/db',
+        alerta_source_database_url=('postgresql://readonly:secret@source/db'),
     )
     validate_configuration(
         settings, 'approved-fixtures/staging-fixture.csv', 30
@@ -172,6 +172,17 @@ def test_validator_requires_fixture_prefix_and_load_false() -> None:
     with pytest.raises(ValueError, match='analysis_load=false'):
         validate_configuration(
             settings.model_copy(update={'analysis_load': True}),
+            'approved-fixtures/staging-fixture.csv',
+            30,
+        )
+    with pytest.raises(ValueError, match='source database'):
+        validate_configuration(
+            settings.model_copy(
+                update={
+                    'alerta_source_database_url': None,
+                    'analysis_database_url': 'postgresql://analysis@db/alerta',
+                }
+            ),
             'approved-fixtures/staging-fixture.csv',
             30,
         )

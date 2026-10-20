@@ -177,7 +177,7 @@ def validate_configuration(
     """Reject unsafe staging validation settings before polling services."""
     if settings.environment != 'staging':
         raise ValueError('staging E2E requires environment=staging')
-    if settings.alerta_database_url is None:
+    if settings.alerta_source_database_url is None:
         raise ValueError('AlertaDengue source database is not configured')
     if settings.analysis_load:
         raise ValueError('staging E2E requires analysis_load=false')
@@ -217,7 +217,9 @@ def main() -> int:
     if not ingress.sha256:
         raise RuntimeError('materialized ingress has no SHA-256')
 
-    source = build_source(settings.alerta_database_url.get_secret_value())
+    source = build_source(
+        settings.alerta_source_database_url.get_secret_value()
+    )
     run = wait_for(
         f'completed AlertaDengue ingestion.run for sha256={ingress.sha256}',
         args.timeout_seconds,

@@ -58,6 +58,10 @@ def test_analysis_job_claim_run_duplicate_and_explicit_retry(
     week = Epiweek.parse(202639)
     first_id = service.claim_ready(Coverage.BR, week)
     assert first_id is not None
+    with sessions() as session:
+        first_job = session.get(AnalysisJobRow, first_id)
+        assert first_job is not None
+        assert first_job.output_dir == str(tmp_path / str(first_id))
     assert service.claim_ready(Coverage.BR, week) is None
     failed = FakeRunner(False)
     assert not service.execute(first_id, failed)
@@ -69,6 +73,12 @@ def test_analysis_job_claim_run_duplicate_and_explicit_retry(
         assert job.attempts == 1
     assert service.retry(first_id)
     assert not service.retry(first_id)
+    with sessions() as session:
+        retried_job = session.get(AnalysisJobRow, first_id)
+        assert retried_job is not None
+        assert retried_job.output_dir == str(
+            tmp_path / str(first_id) / 'attempt-2'
+        )
     assert service.execute(first_id, FakeRunner())
     with sessions() as session:
         job = session.get(AnalysisJobRow, first_id)

@@ -1,5 +1,6 @@
 """In-container command, secret environment and artifact contract tests."""
 
+from contextlib import contextmanager
 from pathlib import Path
 from subprocess import TimeoutExpired
 from uuid import uuid4
@@ -7,7 +8,10 @@ from uuid import uuid4
 import pytest
 
 from infodengue_pipeline.analysis.runner import (
+    AnalysisLoadLockTimeout,
     InContainerAnalysisRunner,
+    _analysis_load_lock,
+    _database_lock_key,
     analysis_argv,
     run_scientific_process,
     validate_outputs,
@@ -137,14 +141,14 @@ def test_zika_sql_alone_does_not_satisfy_required_sql_outputs(
 
 
 def test_runner_passes_secrets_only_in_environment_and_checks_outputs(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, caplog
 ) -> None:
     """Password never appears in argv and successful exit validates outputs."""
     settings = Settings(
         _env_file=None,
         analysis_image='analysis:test',
         analysis_output_root=tmp_path / 'outputs',
-        alerta_database_url=(
+        analysis_database_url=(
             'postgresql+psycopg://user:secret%40pass@db.example:5433/alerta'
         ),
     )
@@ -179,6 +183,11 @@ def test_runner_passes_secrets_only_in_environment_and_checks_outputs(
     assert seen['env']['ALERTA_OUT_DIR'] == str(result.output_dir)
     assert seen['env']['ALERTA_JOB_ID'] == str(job.job_id)
     assert seen['env']['ALERTA_INPUT_FINGERPRINT'] == 'fingerprint'
+    assert 'secret@pass' not in caplog.text
+    runner_log = result.output_dir / 'pipeline-runner.log'
+    assert (
+        not runner_log.exists() or 'secret@pass' not in runner_log.read_text()
+    )
 
 
 def test_runner_does_not_decode_database_password_twice(
@@ -189,7 +198,7 @@ def test_runner_does_not_decode_database_password_twice(
         _env_file=None,
         analysis_image='analysis:test',
         analysis_output_root=tmp_path / 'outputs',
-        alerta_database_url=(
+        analysis_database_url=(
             'postgresql+psycopg://user:abc%2540def@db.example/alerta'
         ),
     )
@@ -217,7 +226,7 @@ def test_runner_contains_output_path_and_handles_nonzero_or_timeout(
         _env_file=None,
         analysis_image='analysis:test',
         analysis_output_root=root,
-        alerta_database_url='postgresql://u:p@localhost/db',
+        analysis_database_url='postgresql://u:p@localhost/db',
     )
     job = request()
     outside = job.__class__(
@@ -293,3 +302,337 @@ def test_timeout_kills_scientific_process_group(
             analysis_argv(request()), {}, tmp_path / 'log', 5
         )
     assert seen == [5, (321, __import__('signal').SIGKILL), None]
+
+
+def test_analysis_runner_does_not_fall_back_to_source_database(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Source-only settings cannot start the scientific process."""
+    settings = Settings(
+        _env_file=None,
+        alerta_source_database_url='postgresql://readonly:secret@db/source',
+        analysis_output_root=tmp_path / 'outputs',
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.run_scientific_process',
+        lambda *_args: pytest.fail('scientific process started'),
+    )
+    with pytest.raises(ValueError, match='analysis database URL'):
+        InContainerAnalysisRunner(settings).run(request())
+
+
+def test_analysis_runner_rejects_incomplete_target_database(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Analysis requires a host, database name, and user in its URL."""
+    settings = Settings(
+        _env_file=None,
+        analysis_database_url='postgresql:///alerta',
+        analysis_output_root=tmp_path / 'outputs',
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.run_scientific_process',
+        lambda *_args: pytest.fail('incomplete DB URL started analysis'),
+    )
+    with pytest.raises(
+        ValueError, match='analysis database URL is incomplete'
+    ):
+        InContainerAnalysisRunner(settings).run(request())
+
+
+def test_load_false_skips_advisory_lock(monkeypatch, tmp_path: Path) -> None:
+    """Read-only scientific jobs do not serialize on the target database."""
+    settings = Settings(
+        _env_file=None,
+        analysis_database_url='postgresql://user:pass@db/alerta',
+        analysis_output_root=tmp_path / 'outputs',
+    )
+    job = request()
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner._analysis_load_lock',
+        lambda *_args: pytest.fail('load=false acquired advisory lock'),
+    )
+
+    def success(_args, _env, _log, _timeout):
+        write_contract_outputs(settings.analysis_output_root / str(job.job_id))
+        return 0
+
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.run_scientific_process', success
+    )
+    assert InContainerAnalysisRunner(settings).run(job).succeeded
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'timeout'])
+def test_load_lock_is_held_and_released_for_complete_execution(
+    monkeypatch, tmp_path: Path, outcome: str
+) -> None:
+    """The load lock spans R, output validation, failure, and timeout."""
+    settings = Settings(
+        _env_file=None,
+        analysis_database_url='postgresql://user:pass@db/alerta',
+        analysis_output_root=tmp_path / 'outputs',
+    )
+    job = request(load=True)
+    lifecycle: list[str] = []
+
+    @contextmanager
+    def fake_lock(_url, _timeout):
+        lifecycle.append('acquired')
+        try:
+            yield
+        finally:
+            lifecycle.append('released')
+
+    def process(_args, _env, _log, _timeout):
+        assert lifecycle == ['acquired']
+        if outcome == 'timeout':
+            raise TimeoutExpired('makim', 1)
+        if outcome == 'failure':
+            return 7
+        output = settings.analysis_output_root / str(job.job_id)
+        write_contract_outputs(output)
+        maps = output / 'incidence_maps'
+        maps.mkdir()
+        (maps / 'map.png').write_bytes(b'png')
+        return 0
+
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner._analysis_load_lock', fake_lock
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.run_scientific_process', process
+    )
+    result = InContainerAnalysisRunner(settings).run(job)
+    assert lifecycle == ['acquired', 'released']
+    assert result.succeeded is (outcome == 'success')
+
+
+def test_database_lock_uses_hash_and_unlocks_after_success_or_exception(
+    monkeypatch,
+) -> None:
+    """The target name alone supplies a stable key and session unlock."""
+    import infodengue_pipeline.analysis.runner as runner
+
+    assert _database_lock_key('alerta') == _database_lock_key('alerta')
+    assert _database_lock_key('alerta') != _database_lock_key('other')
+    assert -(1 << 63) <= _database_lock_key('alerta') < (1 << 63)
+
+    class Result:
+        def scalar_one(self):
+            return True
+
+    class Connection:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, statement, params):
+            self.statements.append((str(statement), params))
+            return Result()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    class Engine:
+        def __init__(self):
+            self.connection = Connection()
+            self.disposed = False
+
+        def connect(self):
+            return self.connection
+
+        def dispose(self):
+            self.disposed = True
+
+    engine = Engine()
+    monkeypatch.setattr(runner, 'create_engine', lambda *_a, **_k: engine)
+    with _analysis_load_lock('postgresql://u:secret@host/alerta', 1):
+        assert len(engine.connection.statements) == 1
+        assert 'pg_try_advisory_lock' in engine.connection.statements[0][0]
+    assert 'pg_advisory_unlock' in engine.connection.statements[-1][0]
+    assert engine.disposed
+
+
+def test_database_lock_unlocks_when_scientific_body_raises(
+    monkeypatch,
+) -> None:
+    """The PostgreSQL session lock is explicitly released on process errors."""
+    import infodengue_pipeline.analysis.runner as runner
+
+    class Result:
+        def scalar_one(self):
+            return True
+
+    class Connection:
+        def __init__(self):
+            self.statements: list[str] = []
+
+        def execute(self, statement, _params):
+            self.statements.append(str(statement))
+            return Result()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    class Engine:
+        def __init__(self):
+            self.connection = Connection()
+
+        def connect(self):
+            return self.connection
+
+        def dispose(self):
+            pass
+
+    engine = Engine()
+    monkeypatch.setattr(runner, 'create_engine', lambda *_a, **_k: engine)
+    with pytest.raises(RuntimeError, match='scientific process failed'):
+        with _analysis_load_lock('postgresql://u:p@host/alerta', 1):
+            raise RuntimeError('scientific process failed')
+    assert 'pg_advisory_unlock' in engine.connection.statements[-1]
+
+
+def test_database_lock_times_out_after_bounded_wait(monkeypatch) -> None:
+    """A busy database lock exits after its configured deadline."""
+    import infodengue_pipeline.analysis.runner as runner
+
+    state = {'closed': False, 'disposed': False}
+
+    class Result:
+        def scalar_one(self):
+            return False
+
+    class Connection:
+        def execute(self, *_args):
+            return Result()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            state['closed'] = True
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+        def dispose(self):
+            state['disposed'] = True
+
+    ticks = iter((0.0, 2.0))
+    monkeypatch.setattr(runner, 'create_engine', lambda *_a, **_k: Engine())
+    monkeypatch.setattr(runner.time, 'monotonic', lambda: next(ticks))
+    monkeypatch.setattr(runner.time, 'sleep', lambda _seconds: None)
+    with pytest.raises(AnalysisLoadLockTimeout):
+        with _analysis_load_lock('postgresql://u:p@host/alerta', 1):
+            pytest.fail('busy lock should not be acquired')
+    assert state == {'closed': True, 'disposed': True}
+
+
+def test_database_lock_retries_after_brief_contention(monkeypatch) -> None:
+    """A brief lock holder does not fail the job before its deadline."""
+    import infodengue_pipeline.analysis.runner as runner
+
+    outcomes = iter((False, True, True))
+
+    class Result:
+        def scalar_one(self):
+            return next(outcomes)
+
+    class Connection:
+        def execute(self, *_args):
+            return Result()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+        def dispose(self):
+            pass
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(runner, 'create_engine', lambda *_a, **_k: Engine())
+    monkeypatch.setattr(runner.time, 'sleep', sleeps.append)
+    with _analysis_load_lock('postgresql://u:p@host/alerta', 2):
+        assert sleeps
+
+
+def test_load_lock_timeout_fails_before_process(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A busy mutating target fails cleanly without invoking R."""
+    settings = Settings(
+        _env_file=None,
+        analysis_database_url='postgresql://user:pass@db/alerta',
+        analysis_output_root=tmp_path / 'outputs',
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner._analysis_load_lock',
+        lambda *_args: (_ for _ in ()).throw(AnalysisLoadLockTimeout()),
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.run_scientific_process',
+        lambda *_args: pytest.fail('R must not start after lock timeout'),
+    )
+    result = InContainerAnalysisRunner(settings).run(request(load=True))
+    assert not result.succeeded
+    assert result.exit_code == 75
+    assert result.error == 'analysis database load lock timed out'
+
+
+@pytest.mark.parametrize(
+    ('failure', 'expected_error'),
+    [
+        (
+            OSError('password=must-not-leak'),
+            'OSError during analysis execution',
+        ),
+        (
+            RuntimeError('password=must-not-leak'),
+            'RuntimeError during analysis execution',
+        ),
+    ],
+)
+def test_runner_sanitizes_execution_errors(
+    monkeypatch, tmp_path: Path, failure: Exception, expected_error: str
+) -> None:
+    """Execution exception text cannot leak into job state or the log."""
+    settings = Settings(
+        _env_file=None,
+        analysis_database_url='postgresql://user:password@db/alerta',
+        analysis_output_root=tmp_path / 'outputs',
+    )
+
+    def fail(*_args):
+        raise failure
+
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.run_scientific_process', fail
+    )
+    result = InContainerAnalysisRunner(settings).run(request())
+    assert result.error == expected_error
+    assert 'must-not-leak' not in (result.error or '')
+    runner_log = result.output_dir / 'pipeline-runner.log'
+    assert (
+        not runner_log.exists()
+        or 'must-not-leak' not in runner_log.read_text()
+    )
+
+
+def test_load_lock_url_requires_database_name() -> None:
+    """The lock cannot silently collapse targets without database names."""
+    with pytest.raises(ValueError, match='no database name'):
+        with _analysis_load_lock('postgresql://user:pass@db', 1):
+            pytest.fail('database name is required')

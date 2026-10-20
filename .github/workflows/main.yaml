@@ -26,3 +26,43 @@ jobs:
         run: uv run makim docs.build
       - name: Compose config
         run: uv run makim containers.config
+      - name: Staging Compose config (placeholders only)
+        run: uv run makim containers.staging-config
+
+  analysis-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: AlertaDengue/AlertaDengueAnalise
+          ref: 8dd6bdd3a02fa43fcc6f30a1a945f02c6aeccc0c
+          path: analysis-source
+      - uses: docker/setup-buildx-action@v3
+      - name: Build pinned scientific base image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./analysis-source
+          file: ./analysis-source/containers/Dockerfile
+          tags: alertadengueanalise:ci
+          load: true
+          cache-from: type=gha,scope=analysis-base
+          cache-to: type=gha,scope=analysis-base,mode=max
+      - name: Build analysis worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: containers/Dockerfile.analysis
+          build-args: ALERTA_ANALYSIS_BASE_IMAGE=alertadengueanalise:ci
+          tags: infodengue-pipeline-analysis:ci
+          load: true
+          cache-from: type=gha,scope=analysis-worker
+          cache-to: type=gha,scope=analysis-worker,mode=max
+      - name: Verify scientific runtime in the worker image
+        run: >-
+          docker run --rm --entrypoint /bin/sh infodengue-pipeline-analysis:ci
+          -ec 'pwd; python --version; python -c "import infodengue_pipeline; print(infodengue_pipeline.__file__)";
+          R --version; celery --version; makim --version; makim deps.check;
+          makim pipeline.refresh-alertas-job --help;
+          if command -v docker >/dev/null 2>&1; then echo "Docker CLI unexpectedly present"; exit 1; fi'
