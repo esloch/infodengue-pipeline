@@ -63,13 +63,18 @@ class MinioObjectStore:
             )
         ]
 
-    def materialize(self, key: str, destination: Path) -> ObjectMetadata:
+    def materialize(
+        self,
+        key: str,
+        destination: Path,
+        version_id: str | None = None,
+    ) -> ObjectMetadata:
         """Atomically expose a complete download inside incoming workspace."""
         resolved = destination.resolve()
         if not resolved.is_relative_to(self._download_root):
             raise ValueError('download destination escapes incoming workspace')
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        info = self.stat(key)
+        info = self.stat(key, version_id)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f'.{resolved.name}.part-', dir=resolved.parent
         )

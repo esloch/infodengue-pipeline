@@ -3,75 +3,131 @@
 ## Ownership boundaries
 
 ```text
-MinIO transient ingress → incoming → watcher → mover → manifest → stage → merge
-                                                       AlertaDengue reference
+AlertaDengue
+  validated SINAN inspection, canonical mover, manifest, stage, merge,
+  rollback, Municipio.Notificacao, public application
 
-pipeline state + outbox → finite AlertaDengueAnalise OCI job (not implemented)
+infodengue-pipeline
+  MinIO ingress state and materialization, completion bridge, events/outbox,
+  workflow readiness, analysis job identity, scheduling, retries, direct runner
+
+AlertaDengueAnalise
+  R / INLA computation, RData, SQL generation, optional SQL application, maps
 ```
 
-AlertaDengue owns scientific ingestion behavior and its validated stage, merge,
-and rollback. AlertaDengueAnalise owns scientific computation. This pipeline
-owns workflow identity, readiness, durable events, and future external job
-coordination. Communication uses finite runtime contracts; the pipeline does
-not import R implementation code or provide a plugin framework.
+The pipeline does not parse SINAN content or import Django/R code. The incoming
+filename is provenance only. The existing AlertaDengue watcher and ingestion
+commands decide the file's disease, coverage, and epiweek.
 
-## SINAN metadata and coverage
-
-`SinanMetadata` is the normalized inspection result: `disease`, `coverage`,
-`epiweek`, `file_format`, and `source_name`. It is produced after validating
-the file contents. Incoming filenames are not authoritative. Disease,
-coverage, and epiweek are derived from validated file contents by the ingestion
-inspection layer. This foundation does not implement a SINAN content parser;
-the existing AlertaDengue mover remains the migration compatibility
-reference. `source_name` is provenance only.
-
-`Coverage` is either `BR` for national delivery or one of the supported state
-codes. National workflow identity is `BR + epiweek`; state identity is `UF +
-epiweek`. Canonical paths and filenames are derived from normalized metadata,
-for example `mg/dbf/dengue/2024/202452/DenInfodengue_MG_202452.dbf`.
-The filesystem adapter returns this deterministic base path before checksum
-deduplication or numbered collision resolution. Zika uses a distinct `zika`
-directory in the new model; legacy A92-family routing needs migration work.
-
-National readiness requires dengue (A90) and chikungunya (A92.0). State
-readiness requires dengue (A90); chikungunya and Zika (A928) are optional.
-Every available supported input participates in a stable fingerprint, so a
-later optional input creates a distinct analysis identity.
-
-## Events and state
-
-The `IngestionCompleted` v1 event carries run ID, disease, coverage, epiweek,
-fingerprint, and completion time. The producer records it in a PostgreSQL
-outbox and commits. A publisher then sends pending events through RabbitMQ and
-Celery with at-least-once delivery. The consumer updates workflow state in a
-separate transaction. Deterministic event identity and monotonic input ordering
-tolerate duplicate and out-of-order delivery. The unique workflow key is
-`(coverage, epiweek)`; each disease has one current input per workflow.
-
-## External jobs
-
-`AnalysisRunner` is a small boundary for one finite external analysis job.
-`Coverage.BR` maps to analysis scope `ALL`; a state maps to that UF. The
-foundation uses `DisabledAnalysisRunner`, so no scientific job is launched.
-A future finite Boletim runner can use an explicit contract without changing
-this boundary into a generic job registry.
-
-## Compatibility direction
-
-Current AlertaDengue operational behavior is the reference:
+## End-to-end flow
 
 ```text
-MinIO → mc mirror --watch → complete local file → incoming directory
-  → watcher → makim ingestion.run → content inspection/mover → canonical file
-  → manifest → enqueue → stage → merge
+MinIO
+  ↓
+infodengue-pipeline ingress (stable metadata identity, atomic local write)
+  ↓
+shared AlertaDengue incoming directory and existing watcher
+  ↓
+content inspection → mover → manifest → stage → merge
+  ↓
+completed ingestion.run identified by local SHA-256
+  ↓
+read-only completion bridge → deterministic event → PostgreSQL outbox
+  ↓
+RabbitMQ / Celery → workflow readiness by (coverage, epiweek)
+  ↓
+one persisted analysis_job per current input fingerprint
+  ↓
+worker-analysis container → AlertaDengueAnalise runtime in the same container
+  ↓
+validated current-week RData and SQL → SUCCEEDED or FAILED
 ```
 
-The sender may use arbitrary names. The mover discovers disease from fields
-such as `ID_AGRAVO`, `CID10`, `CID10_CODIGO`, or `CID10CODIGO`; epiweek from
-`SEM_NOT` variants; and geography from UF fields in the content. It checks
-format-specific candidate fields in priority order and uses a candidate with
-one unambiguous valid UF; if none qualifies, it routes to BR. The legacy tests
-confirm, for example, that CSV prioritizes `SG_UF_NOT` while DBF prioritizes
-`SG_UF`. It generates the canonical path only after inspection. The pipeline
-must preserve these rules during migration without copying the legacy parser
-into this foundation.
+Ingress rows are keyed by a SHA-256 of bucket, key, ETag, version ID, and
+size. Supported `.csv` and `.dbf` objects receive a deterministic UUID-based
+destination below `incoming_root`; key contents never become a filesystem
+path. The materializer computes the downloaded file SHA-256 used by
+`ingestion.run.sha256`.
+
+`worker-ingestion` runs with one Celery process and must remain a single
+replica while filesystem materialization lacks a persistent claim lease.
+Horizontal ingress scaling requires a durable claim/lease lifecycle.
+
+The completion adapter reads only `ingestion.run` fields and does not import
+the AlertaDengue application. Only `status=completed` creates an
+`IngestionCompleted` event. The deterministic event UUID and outbox primary
+key make repeated polling idempotent.
+
+## Workflow identity and readiness
+
+Workflow identity is `(coverage, epiweek)`, so `BR/202639`, `MG/202639`, and
+`SP/202639` remain separate. National input requires A90 and A92.0; A928 is
+optional. State input requires A90; A92.0 and A928 are optional. The newest
+per-disease input wins by `(completed_at, run_id)`. Every available supported
+input participates in the fingerprint.
+
+AlertaDengue now preserves canonical CID-10 values in completed run metadata.
+The completion bridge rejects ambiguous legacy `A92` values.
+
+PostgreSQL row locking protects the READY-to-QUEUED transition and unique
+`(workflow_id, input_fingerprint)` constraint allows one logical analysis job.
+The analysis consumer atomically claims QUEUED; duplicate delivery cannot run
+RUNNING or terminal jobs. Failed jobs require an explicit retry. Completion
+changes workflow status only if that job still matches the current fingerprint.
+
+## Analysis contract
+
+The analysis worker runs the scientific process directly through
+`makim pipeline.refresh-alertas-job`, passing `--week`, `--states`, `--cores`,
+and `--load`. BR maps to `ALL`; a state maps to that UF. Credentials are passed
+through subprocess environment variables and never included in argv or logs.
+The default is `--load false`. A zero exit status is necessary but not
+sufficient: current-week per-state RData, consolidated BR RData, and both
+non-empty dengue and chikungunya SQL files are validated. Maps are required only with
+`load=true`.
+
+The completion bridge and staging validator use only
+`INFODENGUE_PIPELINE_ALERTA_SOURCE_DATABASE_URL` to read completed ingestion
+runs. The scientific runner uses only
+`INFODENGUE_PIPELINE_ANALYSIS_DATABASE_URL` to pass target settings to Makim.
+There is no fallback between the database roles. A `load=true` job takes a
+session-scoped PostgreSQL advisory lock derived from the target database
+name. The lock spans the finite scientific process and is released on normal
+completion, process failure, timeout, or connection close.
+
+The `pipeline.analysis` worker runs inside the dedicated Compose service.
+The image extends AlertaDengueAnalise with the installed pipeline package.
+No Docker socket or CLI is used at runtime. Celery concurrency is one;
+`--cores` is the separate scientific state-parallelism setting.
+
+## Scaling boundary
+
+The supported topology is one VPS / Docker host, with durable PostgreSQL and
+RabbitMQ state and isolated analysis output directories on a local filesystem.
+`load=false` can use multiple analysis workers only when they share that
+filesystem. Multi-host workers require a shared filesystem or a defined
+object-storage artifact contract. Horizontal ingress materialization is not
+supported until persistent claims/leases are implemented.
+
+## Future consumers
+
+No downstream analysis completion event is emitted speculatively. Once a
+real consumer and event contract exist, publish a versioned event such as
+`analysis.succeeded` through the transactional outbox.
+
+BoletimQuinzenal is not currently a finite orchestratable job. Before adding a
+pipeline workload, it needs an explicit week and scope, noninteractive auth,
+image-contained dependencies, no runtime package installs or sibling paths,
+environment/secret-mounted credentials, a deterministic output directory,
+clear exit status, finite single-invocation execution, and rendering
+separated from explicitly enabled publication. Only then should the pipeline
+add a bulletin queue, persisted job, and worker image. See
+[future workload contract](future-workloads.md).
+
+## Validation status
+
+Automated orchestration tests use isolated local SQL state and fake storage,
+source, and runner boundaries. They do not execute the scientific workload.
+The guarded staging validator requires `environment=staging`, an explicit
+safe fixture object key, real shared staging services, and `load=false`. It
+has not been run against staging unless separately reported as such.

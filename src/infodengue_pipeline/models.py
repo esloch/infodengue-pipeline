@@ -166,6 +166,15 @@ class WorkflowStatus(StrEnum):
     FAILED = 'failed'
 
 
+class AnalysisJobStatus(StrEnum):
+    """Lifecycle of one finite AlertaDengueAnalise execution."""
+
+    QUEUED = 'queued'
+    RUNNING = 'running'
+    SUCCEEDED = 'succeeded'
+    FAILED = 'failed'
+
+
 DEFAULT_BR_REQUIRED_DISEASES = frozenset({Disease.DENGUE, Disease.CHIKUNGUNYA})
 DEFAULT_UF_REQUIRED_DISEASES = frozenset({Disease.DENGUE})
 
@@ -298,14 +307,17 @@ class WorkflowSnapshot:
 
 @dataclass(frozen=True)
 class AnalysisJobRequest:
-    """Validated parameters for a future finite scientific OCI job."""
+    """Validated parameters for a finite scientific job."""
 
     job_id: UUID
     coverage: Coverage
     epiweek: Epiweek
     input_fingerprint: str
     cores: int = 1
-    load: bool = True
+    load: bool = False
+    output_dir: Path | None = None
+    image: str | None = None
+    workflow_id: UUID | None = None
 
     def __post_init__(self) -> None:
         """Reject unsupported or unsafe job arguments."""
@@ -329,3 +341,5 @@ class AnalysisJobResult:
     job_id: UUID
     output_dir: Path
     succeeded: bool
+    exit_code: int | None = None
+    error: str | None = None

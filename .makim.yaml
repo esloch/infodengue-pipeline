@@ -38,6 +38,13 @@ groups:
       config:
         help: Validate the development Compose configuration
         run: docker compose --env-file .env.example -f containers/compose.yaml config --quiet
+      staging-config:
+        help: Validate the staging topology using placeholders only
+        run: >-
+          env PIPELINE_WORKER_ENV_FILE=../.env.staging.example
+          PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis.example
+          docker compose --env-file .env.staging.example
+          -f containers/compose-staging.yaml config --quiet
       up:
         help: Start development services
         run: docker compose --env-file .env.example -f containers/compose.yaml up -d --build
@@ -60,3 +67,20 @@ groups:
       validate-storage:
         help: Validate canonical storage on the staging server's local filesystem
         run: python scripts/validate_staging_storage.py
+      validate-e2e:
+        help: Validate one explicitly supplied object through the real staging E2E flow
+        args:
+          object-key:
+            help: Safe staging MinIO fixture object key
+            type: string
+            required: true
+          timeout-seconds:
+            help: Maximum wait for each named workflow stage
+            type: integer
+            default: 1800
+        run: >-
+          docker compose --env-file .env.staging
+          -f containers/compose-staging.yaml run --rm validator
+          python scripts/validate_staging_e2e.py
+          --object-key "${{ args.object_key }}"
+          --timeout-seconds "${{ args.timeout_seconds }}"

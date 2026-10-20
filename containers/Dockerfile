@@ -17,6 +17,7 @@ RUN uv sync --frozen --no-install-project
 
 COPY alembic.ini ./
 COPY alembic ./alembic
+COPY scripts ./scripts
 COPY src ./src
 RUN uv sync --frozen
 
@@ -25,7 +26,7 @@ ARG HOST_GID=1000
 
 RUN groupadd --gid "${HOST_GID}" pipeline \
     && useradd --create-home --uid "${HOST_UID}" --gid "${HOST_GID}" pipeline \
-    && mkdir -p /var/lib/pipeline/incoming /var/lib/pipeline/canonical \
+    && mkdir -p /var/lib/pipeline/incoming \
     && chown -R pipeline:pipeline /app /var/lib/pipeline
 
 USER pipeline

@@ -8,6 +8,8 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -27,7 +29,12 @@ from sqlalchemy.orm import (
     relationship,
 )
 
-from infodengue_pipeline.models import Coverage, Disease, WorkflowStatus
+from infodengue_pipeline.models import (
+    AnalysisJobStatus,
+    Coverage,
+    Disease,
+    WorkflowStatus,
+)
 
 
 class Base(DeclarativeBase):
@@ -165,3 +172,111 @@ class OutboxEventRow(Base):
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+
+
+class IngressStatus(StrEnum):
+    """Minimal durable materialization lifecycle."""
+
+    DISCOVERED = 'discovered'
+    MATERIALIZED = 'materialized'
+    INGESTED = 'ingested'
+    FAILED = 'failed'
+
+
+class IngressObjectRow(Base):
+    """One immutable MinIO object identity and local materialization."""
+
+    __tablename__ = 'ingress_object'
+    __table_args__ = (
+        UniqueConstraint('object_identity', name='uq_ingress_object_identity'),
+        Index('ix_pipeline_ingress_status_created', 'status', 'created_at'),
+        {'schema': 'pipeline'},
+    )
+
+    object_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True
+    )
+    bucket: Mapped[str] = mapped_column(String(128), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    object_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    etag: Mapped[str] = mapped_column(String(128), nullable=False)
+    version_id: Mapped[str | None] = mapped_column(String(256))
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    destination: Mapped[str] = mapped_column(String(2048), nullable=False)
+    status: Mapped[IngressStatus] = mapped_column(
+        Enum(
+            IngressStatus,
+            values_callable=enum_values,
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+    )
+    run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    materialized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_error: Mapped[str | None] = mapped_column(String(512))
+
+
+class AnalysisJobRow(Base):
+    """Pipeline-owned durable state for an analysis execution."""
+
+    __tablename__ = 'analysis_job'
+    __table_args__ = (
+        UniqueConstraint(
+            'workflow_id',
+            'input_fingerprint',
+            name='uq_analysis_job_workflow_fingerprint',
+        ),
+        Index(
+            'ix_pipeline_analysis_job_status_created', 'status', 'created_at'
+        ),
+        {'schema': 'pipeline'},
+    )
+
+    job_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    workflow_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey('pipeline.workflow.workflow_id'),
+        nullable=False,
+    )
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[AnalysisJobStatus] = mapped_column(
+        Enum(
+            AnalysisJobStatus,
+            values_callable=enum_values,
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+    )
+    image: Mapped[str] = mapped_column(String(512), nullable=False)
+    cores: Mapped[int] = mapped_column(Integer, nullable=False)
+    load: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    output_dir: Mapped[str] = mapped_column(String(2048), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(String(512))

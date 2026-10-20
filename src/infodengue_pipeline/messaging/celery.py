@@ -31,6 +31,10 @@ def create_celery_app() -> Celery:
         task_default_exchange_type='direct',
         task_default_routing_key='pipeline.orchestration',
         task_routes={
+            'pipeline.ingestion.scan': {
+                'queue': 'pipeline.ingestion',
+                'routing_key': 'pipeline.ingestion',
+            },
             'pipeline.events.ingestion_completed': {
                 'queue': 'pipeline.events',
                 'routing_key': 'pipeline.events',
@@ -39,9 +43,43 @@ def create_celery_app() -> Celery:
                 'queue': 'pipeline.events',
                 'routing_key': 'pipeline.events',
             },
+            'pipeline.events.bridge_completed': {
+                'queue': 'pipeline.events',
+                'routing_key': 'pipeline.events',
+            },
             'pipeline.health.ping': {
                 'queue': 'pipeline.orchestration',
                 'routing_key': 'pipeline.orchestration',
+            },
+            'pipeline.analysis.dispatch_ready': {
+                'queue': 'pipeline.orchestration',
+                'routing_key': 'pipeline.orchestration',
+            },
+            'pipeline.analysis.run': {
+                'queue': 'pipeline.analysis',
+                'routing_key': 'pipeline.analysis',
+            },
+            'pipeline.analysis.retry': {
+                'queue': 'pipeline.analysis',
+                'routing_key': 'pipeline.analysis',
+            },
+        },
+        beat_schedule={
+            'scan-minio-ingress': {
+                'task': 'pipeline.ingestion.scan',
+                'schedule': settings.minio_poll_seconds,
+            },
+            'bridge-completed-ingestion': {
+                'task': 'pipeline.events.bridge_completed',
+                'schedule': settings.bridge_poll_seconds,
+            },
+            'publish-pending-outbox': {
+                'task': 'pipeline.events.publish_pending',
+                'schedule': settings.outbox_poll_seconds,
+            },
+            'dispatch-ready-analysis': {
+                'task': 'pipeline.analysis.dispatch_ready',
+                'schedule': settings.analysis_poll_seconds,
             },
         },
         task_serializer='json',
