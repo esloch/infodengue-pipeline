@@ -39,26 +39,16 @@ jobs:
           repository: AlertaDengue/AlertaDengueAnalise
           ref: 8dd6bdd3a02fa43fcc6f30a1a945f02c6aeccc0c
           path: analysis-source
-      - uses: docker/setup-buildx-action@v3
       - name: Build pinned scientific base image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./analysis-source
-          file: ./analysis-source/containers/Dockerfile
-          tags: alertadengueanalise:ci
-          load: true
-          cache-from: type=gha,scope=analysis-base
-          cache-to: type=gha,scope=analysis-base,mode=max
+        run: >-
+          docker build -t alertadengueanalise:ci
+          -f analysis-source/containers/Dockerfile analysis-source
       - name: Build analysis worker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: containers/Dockerfile.analysis
-          build-args: ALERTA_ANALYSIS_BASE_IMAGE=alertadengueanalise:ci
-          tags: infodengue-pipeline-analysis:ci
-          load: true
-          cache-from: type=gha,scope=analysis-worker
-          cache-to: type=gha,scope=analysis-worker,mode=max
+        run: >-
+          docker build
+          --build-arg ALERTA_ANALYSIS_BASE_IMAGE=alertadengueanalise:ci
+          -t infodengue-pipeline-analysis:ci
+          -f containers/Dockerfile.analysis .
       - name: Verify scientific runtime in the worker image
         run: >-
           docker run --rm --entrypoint /bin/sh infodengue-pipeline-analysis:ci
