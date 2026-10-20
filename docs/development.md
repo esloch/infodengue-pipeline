@@ -50,4 +50,3 @@ with the scientific runtime and its dedicated `pipeline.analysis` queue.
 The AlertaDengueAnalise scientific base provides the Python 3.11 runtime.
 The analysis worker image extends that runtime with the pipeline package and
 its dependencies without replacing the scientific environment.
-

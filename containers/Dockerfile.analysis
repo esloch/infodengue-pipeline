@@ -27,4 +27,3 @@ RUN python -m pip install --no-cache-dir \
     && rm -r /tmp/pipeline-dist
 
 WORKDIR /opt/alertadengueanalise
-
