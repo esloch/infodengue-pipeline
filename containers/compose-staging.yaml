@@ -113,6 +113,8 @@ services:
   worker-orchestration:
     image: ${PIPELINE_IMAGE:?set pipeline image}
     env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    environment:
+      INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
     command:
       - celery
       - -A
@@ -143,6 +145,8 @@ services:
   worker-analysis:
     image: ${PIPELINE_ANALYSIS_IMAGE:?set analysis worker image}
     env_file: ${PIPELINE_ANALYSIS_ENV_FILE:-../.env.staging.analysis}
+    environment:
+      INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
     command:
       - celery
       - -A
@@ -199,6 +203,8 @@ services:
   validator:
     image: ${PIPELINE_IMAGE:?set pipeline image}
     env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    environment:
+      INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
     command: ["python", "scripts/validate_staging_e2e.py"]
     restart: "no"
     networks:

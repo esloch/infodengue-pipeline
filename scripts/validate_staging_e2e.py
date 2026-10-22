@@ -195,7 +195,7 @@ def main() -> int:
     """Validate one explicit object and its exact staging analysis job."""
     parser = argparse.ArgumentParser()
     parser.add_argument('--object-key', required=True)
-    parser.add_argument('--timeout-seconds', type=float, default=1800)
+    parser.add_argument('--timeout-seconds', type=float, default=7200)
     args = parser.parse_args()
     settings = get_settings()
     validate_configuration(settings, args.object_key, args.timeout_seconds)

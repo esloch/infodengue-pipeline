@@ -43,11 +43,14 @@ pipeline prefix `approved-fixtures/`. Set the AlertaDengue deployment value
 mirror excludes this pipeline-owned prefix. If unset or empty, the existing
 mirror command remains unchanged.
 
-`STAGING_ANALYSIS_OUTPUT_HOST_PATH` maps on the VPS to
-`/var/lib/pipeline/analysis-output` in `worker-analysis` and `validator`.
-`worker-orchestration` stores deterministic output path strings and does not
-mount the artifacts. Keep `worker-ingestion` at one replica and
-`--concurrency=1`; horizontal materialization requires durable claim leases.
+`STAGING_ANALYSIS_OUTPUT_HOST_PATH` is the host-side bind source. On staging
+its value is `/opt/data/staging/analysis-output`. `worker-analysis` and
+`validator` mount it at `/var/lib/pipeline/analysis-output`.
+`worker-orchestration` does not mount the directory; it only receives the
+fixed logical `INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT` value. Compose
+sets that value to `/var/lib/pipeline/analysis-output` in all three services,
+overriding any private env file drift. Keep `worker-ingestion` at one replica
+and `--concurrency=1`; horizontal materialization requires durable claim leases.
 
 Build the analysis worker image from the reviewed AlertaDengueAnalise
 base image and set `PIPELINE_ANALYSIS_IMAGE` to that image. Keep
@@ -68,7 +71,7 @@ fixture object key explicitly:
 ```sh
 uv run makim staging.validate-e2e \
   --object-key 'approved-fixtures/staging-fixture.csv' \
-  --timeout-seconds 1800
+  --timeout-seconds 7200
 ```
 
 This runs the finite `validator` Compose service on the staging networks, so
@@ -86,9 +89,14 @@ or outputs. Do not point staging settings at production.
 The pipeline rejects ambiguous legacy disease code `A92`. Current
 AlertaDengue ingestion preserves canonical CID-10 values for new runs.
 
-This command being implemented does not mean staging was run or passed. Report
-staging E2E as `NOT EXECUTED` until it has been run against those real
-staging services.
+A guarded staging E2E validation reached SUCCESS on 2026-10-21 for coverage
+MG, epiweek 202452, with `load=false`, after operator recovery of issues
+discovered during the run. It validated MinIO ingress, atomic materialization,
+AlertaDengue SINAN ingestion, the completed-run bridge, RabbitMQ/outbox
+coordination, readiness, analysis dispatch, containerized
+AlertaDengueAnalise execution, and RData and SQL artifact validation. SQL
+application and map generation were not exercised because `load=false`.
+This result does not establish production readiness or cutover.
 
 ## Failure and recovery
 

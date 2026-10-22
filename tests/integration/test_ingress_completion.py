@@ -207,11 +207,39 @@ def test_ingress_rejects_object_change_during_materialization(
             )
 
     store = ChangedStore([metadata])
-    coordinator = IngressCoordinator(sessions, store, tmp_path / 'incoming')
+    root = tmp_path / 'incoming'
+    destination = safe_destination(root, metadata)
+    unrelated = root / 'unrelated.dbf'
+    root.mkdir()
+    unrelated.write_bytes(b'keep')
+    coordinator = IngressCoordinator(sessions, store, root)
     assert coordinator.scan() == 0
+    assert not destination.exists()
+    assert unrelated.read_bytes() == b'keep'
     with sessions() as session:
         row = session.scalar(select(IngressObjectRow))
         assert row is not None and row.status is IngressStatus.FAILED
+        assert row.sha256 is None
+
+
+def test_ingress_preserves_existing_destination_if_materialize_raises(
+    sessions, tmp_path: Path
+) -> None:
+    """A failure before atomic exposure must not remove an existing file."""
+    metadata = ObjectMetadata('sinan', 'file.csv', 15, 'etag')
+    store = FakeStore([metadata])
+    store.fail = True
+    root = tmp_path / 'incoming'
+    root.mkdir()
+    destination = safe_destination(root, metadata)
+    destination.write_bytes(b'pre-existing')
+
+    assert IngressCoordinator(sessions, store, root).scan() == 0
+    assert destination.read_bytes() == b'pre-existing'
+    with sessions() as session:
+        row = session.scalar(select(IngressObjectRow))
+        assert row is not None and row.status is IngressStatus.FAILED
+        assert row.sha256 is None
 
 
 def test_completion_bridge_maps_completed_run_to_one_outbox_event(

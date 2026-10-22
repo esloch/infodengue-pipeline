@@ -13,6 +13,11 @@ from infodengue_pipeline.config import Settings
 from infodengue_pipeline.models import ObjectMetadata
 
 
+def _normalize_version_id(version_id: str | None) -> str | None:
+    """Treat MinIO's unversioned sentinel as the absence of a version."""
+    return None if version_id == 'null' else version_id
+
+
 class MinioObjectStore:
     """Access one configured development ingress bucket."""
 
@@ -32,6 +37,7 @@ class MinioObjectStore:
 
     def stat(self, key: str, version_id: str | None = None) -> ObjectMetadata:
         """Fetch SDK independent object metadata."""
+        version_id = _normalize_version_id(version_id)
         info = (
             self._client.stat_object(self._bucket, key)
             if version_id is None
@@ -42,7 +48,11 @@ class MinioObjectStore:
         if info.size is None or info.etag is None:
             raise ValueError(f'Incomplete object metadata for {key}')
         return ObjectMetadata(
-            self._bucket, key, info.size, info.etag, info.version_id
+            self._bucket,
+            key,
+            info.size,
+            info.etag,
+            _normalize_version_id(info.version_id),
         )
 
     def list(self, prefix: str = '') -> list[ObjectMetadata]:
@@ -53,7 +63,7 @@ class MinioObjectStore:
                 item.object_name,
                 item.size,
                 item.etag,
-                item.version_id,
+                _normalize_version_id(item.version_id),
             )
             for item in self._client.list_objects(
                 self._bucket,
