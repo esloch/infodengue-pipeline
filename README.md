@@ -47,9 +47,9 @@ uv run makim containers.config
 
 The real staging validator is guarded and requires a safe, explicitly supplied
 staging object key. It is not a substitute for automated orchestration tests.
-A guarded staging E2E validation reached SUCCESS on 2026-10-21 for MG,
-epiweek 202452, with `load=false`, after operator recovery of issues
-discovered during the run. It exercised ingress through RData and SQL
+A clean staging E2E validation reached SUCCESS on 2026-10-22 for MG,
+epiweek 202412, with `analysis_load=false`, one analysis attempt, and no
+manual recovery after submission. It exercised ingress through RData and SQL
 artifact checks. SQL application and map generation were not exercised. See
 [operations](docs/operations.md) for the validated scope. No production
 cutover is claimed.

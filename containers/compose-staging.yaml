@@ -213,6 +213,23 @@ services:
     volumes:
       - ${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
 
+  e2e-runner:
+    image: ${PIPELINE_IMAGE:?set pipeline image}
+    env_file:
+      - ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+      - path: ${PIPELINE_E2E_ENV_FILE:-../.env.staging.e2e}
+        required: false
+    environment:
+      INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
+    command: ["python", "scripts/run_staging_e2e.py"]
+    restart: "no"
+    networks:
+      - default
+      - staging_integrations
+    volumes:
+      - ${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
+      - ${STAGING_E2E_FIXTURE_HOST_PATH:-../.env.staging.e2e.example}:${STAGING_E2E_FIXTURE_CONTAINER_PATH:-/tmp/staging-e2e-fixture.dbf}:ro
+
 volumes:
   pipeline_staging_pgdata:
   pipeline_staging_rabbitmq:

@@ -11,7 +11,7 @@ def _service_section(path: str, name: str) -> str:
     """Return a service block from the small checked-in Compose contract."""
     text = (Path('containers') / path).read_text()
     return re.split(
-        r'\n  [a-z][a-z-]*:\n',
+        r'\n  [a-z][a-z0-9-]*:\n',
         text.split(f'  {name}:\n', 1)[1],
         maxsplit=1,
     )[0]
@@ -127,6 +127,36 @@ def test_staging_env_file_template_and_ci_paths_are_distinct() -> None:
     assert 'env PIPELINE_WORKER_ENV_FILE=../.env.staging.example' in makim
     assert (
         'PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis.example' in makim
+    )
+
+
+def test_staging_e2e_writer_is_confined_to_finite_runner() -> None:
+    """Only the finite E2E service receives the dedicated writer env file."""
+    runner = _service_section('compose-staging.yaml', 'e2e-runner')
+    validator = _service_section('compose-staging.yaml', 'validator')
+    assert 'PIPELINE_E2E_ENV_FILE' in runner
+    assert 'PIPELINE_WORKER_ENV_FILE' in runner
+    assert 'staging_integrations' in runner
+    assert 'STAGING_E2E_FIXTURE_HOST_PATH' in runner
+    assert 'STAGING_ANALYSIS_OUTPUT_HOST_PATH' in runner
+    assert 'restart: "no"' in runner
+    assert 'PIPELINE_E2E_ENV_FILE' not in validator
+    for name in (
+        'worker-ingestion',
+        'worker-events',
+        'worker-orchestration',
+        'worker-analysis',
+        'worker-beat',
+    ):
+        assert 'PIPELINE_E2E_ENV_FILE' not in _service_section(
+            'compose-staging.yaml', name
+        )
+    template = Path('.env.staging.e2e.example').read_text()
+    assert 'STAGING_E2E_MINIO_ACCESS_KEY=' in template
+    assert 'STAGING_E2E_MINIO_SECRET_KEY=' in template
+    assert (
+        'PIPELINE_E2E_ENV_FILE=../.env.staging.e2e.example'
+        in Path('.makim.yaml').read_text()
     )
 
 

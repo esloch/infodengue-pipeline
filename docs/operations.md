@@ -29,19 +29,18 @@ queue workers, Beat, the external staging integration network, the shared
 incoming bind mount, and shared analysis artifacts. It connects to the
 existing AlertaDengue MinIO service on that network; it does not mount sibling
 source trees or a Docker socket. Populate private `.env.staging` and
-`.env.staging.analysis` files from the tracked templates. Only
+`.env.staging.analysis` files from the tracked templates. Provision a private
+`.env.staging.e2e` from its template for one-shot fixture submissions. Only
 `worker-analysis` receives `PIPELINE_ANALYSIS_ENV_FILE` and the analysis DB
 credential `INFODENGUE_PIPELINE_ANALYSIS_DATABASE_URL`. The core file contains
 the read-only `INFODENGUE_PIPELINE_ALERTA_SOURCE_DATABASE_URL`.
-Provision dedicated MinIO service credentials with read/list access limited
-to the selected bucket/prefix; credential provisioning remains a deployment
-concern.
-
-Staging MinIO uses `minio:9000` over HTTP, bucket `sinan-infodengue`, and
-pipeline prefix `approved-fixtures/`. Set the AlertaDengue deployment value
-`MINIO_MATERIALIZER_EXCLUDE=approved-fixtures/*` so its legacy full-bucket
-mirror excludes this pipeline-owned prefix. If unset or empty, the existing
-mirror command remains unchanged.
+Provision the runtime MinIO account with read/list access limited to the
+configured bucket and prefix. Provision a separate E2E writer account with
+only object upload and exact-object stat permissions under that prefix.
+The endpoint, bucket, secure mode, and prefix come from private staging
+configuration. Credential and policy provisioning are deployment concerns.
+Configure the AlertaDengue legacy mirror to exclude the configured
+pipeline-owned prefix.
 
 `STAGING_ANALYSIS_OUTPUT_HOST_PATH` is the host-side bind source. On staging
 its value is `/opt/data/staging/analysis-output`. `worker-analysis` and
@@ -63,8 +62,22 @@ Pipeline PostgreSQL and RabbitMQ use the unique `pipeline-postgres` and
 `pipeline-rabbitmq` aliases. Set these hostnames in the private worker env
 file so services on both networks reach the pipeline's own broker and database.
 
-The validator refuses to run unless
-`INFODENGUE_PIPELINE_ENVIRONMENT=staging`, the read-only AlertaDengue source
+The preferred clean acceptance command is:
+
+```sh
+uv run makim staging.e2e \
+  --fixture '/path/to/fresh-fixture.dbf'
+```
+
+The fixture must be CSV or DBF and its SHA256 must not appear in any
+`ingestion.run` row. The command streams its hash, generates an object key under
+the configured prefix, uploads with dedicated writer credentials, then follows
+the existing validator. `analysis_load=false` is mandatory. A clean PASS
+requires one analysis attempt. Failures preserve the uploaded object and all
+pipeline state for investigation; the runner does not repair or retry them.
+
+For explicit diagnostic validation, the lower-level validator refuses to run
+unless `INFODENGUE_PIPELINE_ENVIRONMENT=staging`, the read-only AlertaDengue source
 database is configured, and analysis loading is disabled. Supply a safe
 fixture object key explicitly:
 
@@ -89,9 +102,12 @@ or outputs. Do not point staging settings at production.
 The pipeline rejects ambiguous legacy disease code `A92`. Current
 AlertaDengue ingestion preserves canonical CID-10 values for new runs.
 
-A guarded staging E2E validation reached SUCCESS on 2026-10-21 for coverage
-MG, epiweek 202452, with `load=false`, after operator recovery of issues
-discovered during the run. It validated MinIO ingress, atomic materialization,
+A clean staging E2E validation reached SUCCESS on 2026-10-22 for coverage
+MG, epiweek 202412, with `analysis_load=false`, one analysis attempt, and no
+manual recovery after submission. The validator returned SUCCESS for run
+`f4d52f3a-35f0-4717-a6ef-da35fd0bf1a4` and job
+`0b9c429c-278d-49c6-add7-c9131e42f484`. It validated MinIO ingress, atomic
+materialization,
 AlertaDengue SINAN ingestion, the completed-run bridge, RabbitMQ/outbox
 coordination, readiness, analysis dispatch, containerized
 AlertaDengueAnalise execution, and RData and SQL artifact validation. SQL
