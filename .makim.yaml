@@ -77,7 +77,7 @@ groups:
           timeout-seconds:
             help: Maximum wait for each named workflow stage
             type: integer
-            default: 1800
+            default: 7200
         run: >-
           docker compose --env-file .env.staging
           -f containers/compose-staging.yaml run --rm validator

@@ -70,7 +70,23 @@ def test_staging_worker_env_and_output_mounts_are_isolated() -> None:
     assert 'MINIO_ACCESS_KEY' not in analysis_env
     assert mount in analysis
     assert mount in validator
-    assert '/var/lib/pipeline/analysis-output' not in orchestration
+    fixed_root = (
+        'INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: '
+        '/var/lib/pipeline/analysis-output'
+    )
+    assert fixed_root in orchestration
+    assert fixed_root in analysis
+    assert fixed_root in validator
+    assert mount not in orchestration
+    assert '    volumes:' not in orchestration
+    assert (
+        'INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT='
+        '/var/lib/pipeline/analysis-output'
+    ) in core
+    assert (
+        'INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT='
+        '/var/lib/pipeline/analysis-output'
+    ) in analysis_env
     assert 'pipeline-postgres' in core
     assert 'pipeline-rabbitmq' in core
     assert 'minio:9000' in core

@@ -194,3 +194,15 @@ def test_staging_run_disease_resolution_accepts_canonical_a92() -> None:
     assert resolve_run_disease('A92', 'A928') is Disease.ZIKA
     with pytest.raises(ValueError, match='ambiguous A92'):
         resolve_run_disease('A92', None)
+
+
+def test_staging_validator_defaults_allow_real_analysis_duration() -> None:
+    """Both validator entry points allow a bounded two-hour E2E run."""
+    root = Path(__file__).resolve().parents[2]
+    script = (root / 'scripts/validate_staging_e2e.py').read_text()
+    makim = (root / '.makim.yaml').read_text()
+    assert (
+        "parser.add_argument('--timeout-seconds', type=float, default=7200)"
+        in script
+    )
+    assert '            default: 7200' in makim

@@ -13,6 +13,7 @@ from infodengue_pipeline.models import (
     SinanMetadata,
 )
 from infodengue_pipeline.storage.filesystem import FilesystemCanonicalStorage
+from infodengue_pipeline.storage.ingress import object_identity
 from infodengue_pipeline.storage.minio import (
     MinioObjectStore,
     build_object_store,
@@ -142,6 +143,53 @@ def test_minio_materialization_is_atomic_and_contained(tmp_path: Path) -> None:
     assert list(target.parent.glob('*.part-*')) == []
     with pytest.raises(ValueError):
         store.materialize('x', tmp_path.parent / 'escape')
+
+
+def test_unversioned_minio_sentinel_has_one_identity(tmp_path: Path) -> None:
+    """MinIO list's null sentinel must match unversioned stat metadata."""
+    client = Mock()
+    client.list_objects.return_value = [
+        Mock(object_name='raw.dbf', size=4, etag='etag', version_id='null')
+    ]
+    client.stat_object.return_value = Mock(
+        size=4, etag='etag', version_id=None
+    )
+
+    def download(_bucket: str, _key: str, path: str) -> None:
+        Path(path).write_bytes(b'data')
+
+    client.fget_object.side_effect = download
+    store = MinioObjectStore(client, 'bucket', tmp_path)
+    listed = store.list()[0]
+    stated = store.stat('raw.dbf', version_id='null')
+    target = tmp_path / 'raw.dbf'
+    materialized = store.materialize('raw.dbf', target, version_id='null')
+
+    assert listed.version_id is None
+    assert stated.version_id is None
+    assert object_identity(listed) == object_identity(stated)
+    assert materialized.version_id is None
+    assert target.read_bytes() == b'data'
+    assert list(tmp_path.glob('*.part-*')) == []
+    assert all(
+        'version_id' not in call.kwargs
+        for call in client.stat_object.call_args_list
+    )
+    assert 'version_id' not in client.fget_object.call_args.kwargs
+
+
+def test_stat_normalizes_sdk_null_and_real_versions(tmp_path: Path) -> None:
+    """Both SDK response boundaries normalize only the literal sentinel."""
+    client = Mock()
+    client.stat_object.return_value = Mock(
+        size=4, etag='etag', version_id='null'
+    )
+    store = MinioObjectStore(client, 'bucket', tmp_path)
+    assert store.stat('raw.dbf').version_id is None
+
+    client.stat_object.return_value.version_id = 'version-1'
+    assert store.stat('raw.dbf', 'version-1').version_id == 'version-1'
+    assert client.stat_object.call_args.kwargs == {'version_id': 'version-1'}
 
 
 def test_minio_failure_cleans_temporary_and_preserves_final(

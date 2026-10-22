@@ -116,10 +116,12 @@ class IngressCoordinator:
                         status=IngressStatus.DISCOVERED,
                     )
                     session.add(row)
+            exposed = False
             try:
                 materialized = self._store.materialize(
                     metadata.key, destination, metadata.version_id
                 )
+                exposed = True
                 if object_identity(materialized) != identity:
                     raise IOError(
                         f'MinIO object changed during materialization: '
@@ -127,6 +129,8 @@ class IngressCoordinator:
                     )
                 digest = file_sha256(destination)
             except Exception as exc:
+                if exposed:
+                    destination.unlink(missing_ok=True)
                 with self._sessions.begin() as session:
                     row = session.get(IngressObjectRow, object_id)
                     if row is not None:
