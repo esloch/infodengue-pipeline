@@ -1,7 +1,8 @@
 """Exact object, run, workflow and analysis job staging correlation."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -24,9 +25,11 @@ from infodengue_pipeline.models import (
 )
 from infodengue_pipeline.staging.e2e import (
     load_analysis_job,
+    load_completed_run_or_fail,
     load_current_workflow,
     load_ingress,
     load_workflow_input,
+    require_current_run,
     validate_configuration,
 )
 from infodengue_pipeline.storage.ingress import object_identity
@@ -208,11 +211,78 @@ def test_staging_validator_defaults_allow_real_analysis_duration() -> None:
 
 
 @pytest.mark.parametrize(
+    'status', [None, 'queued', 'staging', 'staged', 'merging']
+)
+def test_completed_run_poll_waits_for_active_status(
+    status: str | None,
+) -> None:
+    """An absent or active run leaves the validator polling."""
+    source = SimpleNamespace(
+        status_by_sha256=lambda _sha: status,
+        by_sha256=lambda _sha: pytest.fail('read incomplete run'),
+    )
+    assert load_completed_run_or_fail(source, 'a' * 64) is None
+
+
+def test_completed_run_poll_returns_completed_run() -> None:
+    """A completed status loads the existing completed-run contract."""
+    from infodengue_pipeline.ingestion.completion import CompletedRun
+
+    digest = 'a' * 64
+    run = CompletedRun(
+        uuid4(),
+        'completed',
+        'MG',
+        'A90',
+        202412,
+        digest,
+        datetime.now(timezone.utc),
+    )
+    source = SimpleNamespace(
+        status_by_sha256=lambda sha: 'completed' if sha == digest else None,
+        by_sha256=lambda sha: run if sha == digest else None,
+    )
+    assert load_completed_run_or_fail(source, digest) is run
+
+
+def test_completed_run_poll_fails_immediately() -> None:
+    """A failed upstream run raises without querying completed fields."""
+    digest = 'a' * 64
+    source = SimpleNamespace(
+        status_by_sha256=lambda _sha: 'failed',
+        by_sha256=lambda _sha: pytest.fail('read failed run'),
+    )
+    with pytest.raises(
+        RuntimeError, match=f'ingestion.run failed for sha256={digest}'
+    ):
+        load_completed_run_or_fail(source, digest)
+
+
+@pytest.mark.parametrize('seconds', [-1, 0, 1])
+def test_current_run_boundary(seconds: int) -> None:
+    """Only a completion before ingress creation is historical."""
+    created = datetime(2026, 10, 23, tzinfo=timezone.utc)
+    finished = created + timedelta(seconds=seconds)
+    if seconds < 0:
+        with pytest.raises(RuntimeError, match='predates current ingress'):
+            require_current_run(finished, created)
+    else:
+        require_current_run(finished, created)
+
+
+def test_current_run_normalizes_timezones() -> None:
+    """A naive UTC ingress timestamp is compared with aware UTC runs."""
+    created = datetime(2026, 10, 23)
+    require_current_run(created.replace(tzinfo=timezone.utc), created)
+
+
+@pytest.mark.parametrize(
     'job_status',
     [AnalysisJobStatus.SUCCEEDED, AnalysisJobStatus.FAILED],
 )
+@pytest.mark.parametrize('run_offset_seconds', [0, 1])
 def test_reusable_validator_correlates_current_job(
-    monkeypatch, capsys, job_status
+    monkeypatch, capsys, job_status, run_offset_seconds
 ):
     """The shared validator follows one object through the current job."""
     from types import SimpleNamespace
@@ -229,10 +299,19 @@ def test_reusable_validator_correlates_current_job(
     ingress = SimpleNamespace(
         status=IngressStatus.MATERIALIZED,
         sha256=sha,
-        materialized_at=now,
+        created_at=now,
+        materialized_at=now + timedelta(seconds=2),
         run_id=run_id,
     )
-    run = CompletedRun(run_id, 'completed', 'MG', 'A90', 202412, sha, now)
+    run = CompletedRun(
+        run_id,
+        'completed',
+        'MG',
+        'A90',
+        202412,
+        sha,
+        now + timedelta(seconds=run_offset_seconds),
+    )
     workflow_input = SimpleNamespace(
         run_id=run_id,
         disease=Disease.DENGUE,
@@ -273,7 +352,10 @@ def test_reusable_validator_correlates_current_job(
     monkeypatch.setattr(
         e2e,
         'build_source',
-        lambda _url: SimpleNamespace(by_sha256=lambda _sha: run),
+        lambda _url: SimpleNamespace(
+            status_by_sha256=lambda _sha: 'completed',
+            by_sha256=lambda _sha: run,
+        ),
     )
     monkeypatch.setattr(
         e2e,
@@ -345,6 +427,7 @@ def test_reusable_validator_rejects_failed_ingress_and_old_run(
         status=status,
         last_error='download failed',
         sha256='a' * 64,
+        created_at=now,
         materialized_at=now,
     )
     run = CompletedRun(
@@ -366,7 +449,10 @@ def test_reusable_validator_rejects_failed_ingress_and_old_run(
     monkeypatch.setattr(
         e2e,
         'build_source',
-        lambda _url: SimpleNamespace(by_sha256=lambda _sha: run),
+        lambda _url: SimpleNamespace(
+            status_by_sha256=lambda _sha: 'completed',
+            by_sha256=lambda _sha: run,
+        ),
     )
     configured = Settings(
         _env_file=None,

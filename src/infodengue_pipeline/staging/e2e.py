@@ -25,6 +25,8 @@ from infodengue_pipeline.db.models import (
     WorkflowRow,
 )
 from infodengue_pipeline.ingestion.completion import (
+    CompletedRun,
+    PostgresCompletedIngestionSource,
     build_source,
     resolve_run_disease,
 )
@@ -78,26 +80,39 @@ def report(stage: str, detail: str = '', *, waiting: bool = False) -> None:
 
 
 def require_current_run(
-    finished_at: datetime, materialized_at: datetime | None
+    finished_at: datetime, ingress_created_at: datetime | None
 ) -> None:
-    """Reject a completed ingestion predating this object's materialization."""
-    if materialized_at is None:
+    """Reject a completed ingestion that predates this ingress object."""
+    if ingress_created_at is None:
         return
-    materialized = (
-        materialized_at.replace(tzinfo=timezone.utc)
-        if materialized_at.tzinfo is None
-        else materialized_at.astimezone(timezone.utc)
+    created = (
+        ingress_created_at.replace(tzinfo=timezone.utc)
+        if ingress_created_at.tzinfo is None
+        else ingress_created_at.astimezone(timezone.utc)
     )
     finished = (
         finished_at.replace(tzinfo=timezone.utc)
         if finished_at.tzinfo is None
         else finished_at.astimezone(timezone.utc)
     )
-    if finished < materialized:
+    if finished < created:
         raise RuntimeError(
-            'completed AlertaDengue run predates current '
-            'ingress materialization'
+            'completed AlertaDengue run predates current ingress'
         )
+
+
+def load_completed_run_or_fail(
+    source: PostgresCompletedIngestionSource, digest: str
+) -> CompletedRun | None:
+    """Poll one upstream run and stop immediately if it has failed."""
+    status = source.status_by_sha256(digest)
+    if status == 'failed':
+        raise RuntimeError(
+            f'AlertaDengue ingestion.run failed for sha256={digest}'
+        )
+    if status != 'completed':
+        return None
+    return source.by_sha256(digest)
 
 
 def wait_for(stage: str, timeout: float, read: Callable[[], T | None]) -> T:
@@ -267,11 +282,11 @@ def validate_e2e(
     run = wait_for(
         f'completed AlertaDengue ingestion.run for sha256={ingress.sha256}',
         timeout,
-        lambda: source.by_sha256(ingress.sha256 or ''),
+        lambda: load_completed_run_or_fail(source, ingress.sha256 or ''),
     )
     if run.sha256 != ingress.sha256:
         raise RuntimeError('completed run SHA-256 does not match ingress')
-    require_current_run(run.finished_at, ingress.materialized_at)
+    require_current_run(run.finished_at, ingress.created_at)
     report('ingestion completed', f' run_id={run.run_id}')
     run_disease = resolve_run_disease(run.disease, run.canonical_cid10)
     report('workflow input', waiting=True)

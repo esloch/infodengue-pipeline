@@ -107,6 +107,18 @@ def test_exists_sha256_queries_all_statuses_read_only() -> None:
     assert values == {'sha256': 'a' * 64}
 
 
+@pytest.mark.parametrize('status', [None, 'staging', 'completed', 'failed'])
+def test_status_by_sha256_reads_any_run_status(status: str | None) -> None:
+    """Read the unique SHA's status without filtering upstream states."""
+    connection = FakeConnection(None if status is None else {'status': status})
+    source = PostgresCompletedIngestionSource(FakeEngine(connection))
+    assert source.status_by_sha256('a' * 64) == status
+    assert connection.statements[0][0] == 'SET TRANSACTION READ ONLY'
+    query, values = connection.statements[1]
+    assert query == 'SELECT status FROM ingestion.run WHERE sha256 = :sha256'
+    assert values == {'sha256': 'a' * 64}
+
+
 def test_source_ignores_missing_run_and_missing_finish_time() -> None:
     """A result without a complete successful timestamp cannot be bridged."""
     source = PostgresCompletedIngestionSource(FakeEngine(FakeConnection(None)))
