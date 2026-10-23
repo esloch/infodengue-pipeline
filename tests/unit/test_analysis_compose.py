@@ -234,6 +234,38 @@ def test_production_service_set_and_privilege_boundary() -> None:
         )
 
 
+def test_production_workers_are_gated_by_successful_migration() -> None:
+    """Compose owns one migration lifecycle before workers start."""
+    migrate = _service_section('compose-prod.yaml', 'migrate')
+    assert 'command: ["alembic", "upgrade", "head"]' in migrate
+    assert 'restart: "no"' in migrate
+    assert 'postgres:\n        condition: service_healthy' in migrate
+    for name in (
+        'worker-ingestion',
+        'worker-events',
+        'worker-orchestration',
+        'worker-analysis',
+    ):
+        worker = _service_section('compose-prod.yaml', name)
+        assert (
+            'migrate:\n        condition: service_completed_successfully'
+            in worker
+        )
+        assert 'postgres:\n        condition: service_healthy' in worker
+        assert 'rabbitmq:\n        condition: service_healthy' in worker
+
+
+def test_production_documented_startup_uses_compose_dependencies() -> None:
+    """Normal startup does not launch a disposable second migration."""
+    docs = Path('docs/production.md').read_text()
+    startup = docs.split('## Starting the production profile\n', 1)[1].split(
+        '\n## Migrations\n', 1
+    )[0]
+    assert startup.count('  up -d\n') == 1
+    assert '  ps --all\n' in startup
+    assert 'run --rm migrate' not in startup
+
+
 def test_production_worker_env_mounts_and_networks() -> None:
     """Analysis has a separate env and output bind."""
     compose = 'compose-prod.yaml'

@@ -68,6 +68,16 @@ Do not reuse `/opt/data/staging/analysis-output`, which belongs to the staging
 profile. The incoming bind points to the staging AlertaDengue incoming path;
 never use the real production incoming path for this rehearsal.
 
+The production profile has separate pipeline state, so it cannot recognize
+objects already processed by another pipeline database. The rehearsal must not
+consume the same MinIO prefix concurrently with another active pipeline
+deployment. Before enabling `worker-ingestion` and `worker-beat`, either stop
+the regular staging pipeline consuming that prefix or select a dedicated
+rehearsal prefix that the regular staging pipeline does not consume. Prefer a
+dedicated prefix for a later controlled rehearsal object flow. Only one
+pipeline materialization flow should feed the selected rehearsal MinIO prefix
+into the shared AlertaDengue incoming directory at a time.
+
 ## Image identity
 
 Set `PIPELINE_IMAGE` and `PIPELINE_ANALYSIS_IMAGE` to reviewed, immutable image
@@ -96,35 +106,27 @@ docker compose \
 
 ## Starting the production profile
 
-Run these commands only after the private rehearsal configuration and external
-staging resources have been reviewed:
+These commands describe the production-profile lifecycle. Do not start the
+full ingestion and orchestration stack on the staging host until the private
+rehearsal resources and MinIO prefix have been reviewed. Issue #9 provides the
+explicit production-profile validation gate.
 
 ```sh
 docker compose \
   --env-file .env.prod \
   -f containers/compose-prod.yaml \
-  up -d postgres rabbitmq
+  up -d
 
 docker compose \
   --env-file .env.prod \
   -f containers/compose-prod.yaml \
-  run --rm migrate
-
-docker compose \
-  --env-file .env.prod \
-  -f containers/compose-prod.yaml \
-  up -d \
-  worker-ingestion \
-  worker-events \
-  worker-orchestration \
-  worker-analysis \
-  worker-beat
-
-docker compose \
-  --env-file .env.prod \
-  -f containers/compose-prod.yaml \
-  ps
+  ps --all
 ```
+
+Compose waits for healthy PostgreSQL and RabbitMQ, runs `migrate` once, and
+starts the workers after it exits successfully. Expected state: PostgreSQL,
+RabbitMQ, and all five workers are running and healthy; `migrate` is exited
+successfully. The migration container does not remain running.
 
 ## Migrations
 
@@ -132,6 +134,18 @@ docker compose \
 database. It does not run Django migrations, migrate the AlertaDengue database,
 or apply generated scientific SQL. Migration is separate from analysis
 `load=true`, which remains disabled for this issue.
+
+For deliberate migration maintenance, an operator can run the Compose service:
+
+```sh
+docker compose \
+  --env-file .env.prod \
+  -f containers/compose-prod.yaml \
+  up migrate
+```
+
+This is an operator maintenance command, not an additional step before normal
+`docker compose up -d` startup.
 
 ## Stopping services
 
