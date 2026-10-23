@@ -82,8 +82,8 @@ groups:
             required: true
           timeout-seconds:
             help: Maximum wait for each named workflow stage
-            type: integer
-            default: 7200
+            type: string
+            default: "7200"
         run: >-
           bash scripts/run_staging_e2e.sh
           '${{ args.fixture | replace("'", "'\"'\"'") }}'
@@ -100,8 +100,8 @@ groups:
             required: true
           timeout-seconds:
             help: Maximum wait for each named workflow stage
-            type: integer
-            default: 7200
+            type: string
+            default: "7200"
         run: >-
           docker compose --env-file .env.staging
           -f containers/compose-staging.yaml run --rm validator
