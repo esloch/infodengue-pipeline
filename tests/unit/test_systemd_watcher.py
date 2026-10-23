@@ -31,8 +31,8 @@ def test_systemd_lifecycle_and_logging() -> None:
         'Restart=on-failure',
         'RestartSec=5s',
         'KillSignal=SIGTERM',
-        'KillMode=control-group',
-        'TimeoutStopSec=30s',
+        'KillMode=mixed',
+        'TimeoutStopSec=1h',
         'StandardOutput=journal',
         'StandardError=journal',
         'WantedBy=default.target',
@@ -72,12 +72,17 @@ def test_host_environment_boundary() -> None:
 
 def test_operator_documentation() -> None:
     """Production docs cover service operations and legacy migration."""
-    docs = Path('docs/production.md').read_text()
+    docs = Path('docs/production.md').read_text().lower()
     for required in (
         'systemctl --user',
         'journalctl --user',
         'infodengue-sinan-watcher.service',
         '/opt/data/staging/sinan/incoming',
+        'sigterm',
+        'active ingestion action',
+        'settle timers',
+        'startup reconciliation',
+        'advisory lock',
     ):
         assert required in docs
     assert 'do not use `ingestion.watch-start`' in docs

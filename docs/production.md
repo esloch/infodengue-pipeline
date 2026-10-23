@@ -156,10 +156,21 @@ systemctl --user disable --now infodengue-sinan-watcher.service
 ```
 
 The service uses `Restart=on-failure` with a five-second delay; a deliberate
-stop stays stopped. Systemd sends SIGTERM to the service control group and
-allows up to 30 seconds to stop. The current AlertaDengue watcher catches
-`KeyboardInterrupt`, but has no explicit SIGTERM cleanup handler; this contract
-does not establish application-level graceful shutdown for an active ingestion.
+stop stays stopped. Systemd sends SIGTERM to the watcher main process and allows
+up to one hour for shutdown. The watcher stops its observer, cancels pending
+settle timers, and lets an active ingestion action finish before exiting. Pending
+files remain in the incoming directory for recovery on the next startup.
+
+The watcher holds a kernel advisory lock for its selected incoming directory, so
+a second foreground watcher for that path exits instead of running concurrently.
+Systemd also limits the named user service to one instance. Stop any existing
+`makim ingestion.watch-start` watcher before migrating supervision to systemd;
+systemd remains the normal lifecycle owner after migration.
+
+Startup reconciliation scans supported files already present in the incoming
+directory and schedules them through the same settle and action path. This closes
+the restart gap for files materialized while the watcher was down and does not
+enable `--include-existing`, `--requeue`, or `--allow-outdated`.
 Review journald after stopping it.
 
 Only in a controlled rehearsal while the watcher is idle and no SINAN file is
