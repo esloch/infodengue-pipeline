@@ -25,6 +25,10 @@ class FakeResult:
         """Return the first configured row."""
         return self._row
 
+    def scalar_one(self):
+        """Return the scalar existence probe result."""
+        return self._row
+
 
 class FakeConnection:
     """Record source queries and return one configured database row."""
@@ -88,6 +92,31 @@ def test_source_maps_contract_fields_and_enforces_read_only() -> None:
     query, values = connection.statements[1]
     assert 'WHERE sha256 = :sha256 AND status = :status' in query
     assert values == {'sha256': 'a' * 64, 'status': 'completed'}
+
+
+def test_exists_sha256_queries_all_statuses_read_only() -> None:
+    """Freshness query must not filter to completed runs."""
+    connection = FakeConnection(True)
+    assert PostgresCompletedIngestionSource(
+        FakeEngine(connection)
+    ).exists_sha256('a' * 64)
+    assert connection.statements[0][0] == 'SET TRANSACTION READ ONLY'
+    query, values = connection.statements[1]
+    assert 'WHERE sha256 = :sha256' in query
+    assert 'status' not in query.lower()
+    assert values == {'sha256': 'a' * 64}
+
+
+@pytest.mark.parametrize('status', [None, 'staging', 'completed', 'failed'])
+def test_status_by_sha256_reads_any_run_status(status: str | None) -> None:
+    """Read the unique SHA's status without filtering upstream states."""
+    connection = FakeConnection(None if status is None else {'status': status})
+    source = PostgresCompletedIngestionSource(FakeEngine(connection))
+    assert source.status_by_sha256('a' * 64) == status
+    assert connection.statements[0][0] == 'SET TRANSACTION READ ONLY'
+    query, values = connection.statements[1]
+    assert query == 'SELECT status FROM ingestion.run WHERE sha256 = :sha256'
+    assert values == {'sha256': 'a' * 64}
 
 
 def test_source_ignores_missing_run_and_missing_finish_time() -> None:

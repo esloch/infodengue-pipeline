@@ -43,6 +43,7 @@ groups:
         run: >-
           env PIPELINE_WORKER_ENV_FILE=../.env.staging.example
           PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis.example
+          PIPELINE_E2E_ENV_FILE=../.env.staging.e2e.example
           docker compose --env-file .env.staging.example
           -f containers/compose-staging.yaml config --quiet
       up:
@@ -64,6 +65,22 @@ groups:
 
   staging:
     tasks:
+      e2e:
+        help: Submit a fresh fixture and validate a clean staging E2E
+        backend: bash
+        args:
+          fixture:
+            help: Local CSV or DBF fixture path
+            type: string
+            required: true
+          timeout-seconds:
+            help: Maximum wait for each named workflow stage
+            type: integer
+            default: 7200
+        run: >-
+          bash scripts/run_staging_e2e.sh
+          '${{ args.fixture | replace("'", "'\"'\"'") }}'
+          '${{ args.timeout_seconds }}'
       validate-storage:
         help: Validate canonical storage on the staging server's local filesystem
         run: python scripts/validate_staging_storage.py

@@ -74,6 +74,37 @@ class PostgresCompletedIngestionSource:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
+    def exists_sha256(self, digest: str) -> bool:
+        """Read whether any upstream run, regardless of status, owns a SHA."""
+        with self._engine.connect() as connection:
+            connection.execute(text('SET TRANSACTION READ ONLY'))
+            return bool(
+                connection.execute(
+                    text(
+                        'SELECT EXISTS (SELECT 1 FROM ingestion.run '
+                        'WHERE sha256 = :sha256)'
+                    ),
+                    {'sha256': digest},
+                ).scalar_one()
+            )
+
+    def status_by_sha256(self, digest: str) -> str | None:
+        """Return the current upstream run status for this SHA."""
+        with self._engine.connect() as connection:
+            connection.execute(text('SET TRANSACTION READ ONLY'))
+            row = (
+                connection.execute(
+                    text(
+                        'SELECT status FROM ingestion.run '
+                        'WHERE sha256 = :sha256'
+                    ),
+                    {'sha256': digest},
+                )
+                .mappings()
+                .first()
+            )
+        return str(row['status']) if row is not None else None
+
     def by_sha256(self, digest: str) -> CompletedRun | None:
         """Read one completed run by the unique file SHA-256."""
         with self._engine.connect() as connection:
