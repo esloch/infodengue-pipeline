@@ -78,6 +78,126 @@ dedicated prefix for a later controlled rehearsal object flow. Only one
 pipeline materialization flow should feed the selected rehearsal MinIO prefix
 into the shared AlertaDengue incoming directory at a time.
 
+## SINAN watcher supervision
+
+The `worker-ingestion` container atomically materializes files into the shared
+incoming directory. One host-level systemd user service supervises the existing
+AlertaDengue foreground watcher, which invokes `makim ingestion.run` and owns
+SINAN interpretation and ingestion behavior. The watcher stays outside Compose.
+Use one shared incoming directory and one `infodengue-sinan-watcher.service`
+per user manager. Repeated starts of this non-template unit do not create
+another instance. Do not copy or rename the unit to watch the same path.
+
+From this repository, install the unit and a private host configuration for
+the service account:
+
+```sh
+mkdir -p ~/.config/systemd/user
+mkdir -p ~/.config/infodengue
+cp deploy/systemd/infodengue-sinan-watcher.service \
+  ~/.config/systemd/user/infodengue-sinan-watcher.service
+cp deploy/systemd/sinan-watcher.env.example \
+  ~/.config/infodengue/sinan-watcher.env
+chmod 600 ~/.config/infodengue/sinan-watcher.env
+```
+
+Edit only the private `~/.config/infodengue/sinan-watcher.env`. For the current
+staging-host rehearsal, set:
+
+```text
+SINAN_WATCH_PATH=/opt/data/staging/sinan/incoming
+SINAN_WATCH_SETTLE_TIME=5.0
+```
+
+The pipeline profile still uses `INFODENGUE_PIPELINE_ENVIRONMENT=prod`; this
+watch path remains staging-only. The required env file and `ExecStartPre` check
+make startup fail if the configuration or incoming directory is missing; the
+service does not create that directory. Do not put database or MinIO credentials
+in this file. AlertaDengue uses its existing deployment configuration for its
+runtime environment.
+
+User-level systemd does not load an interactive shell profile. In the reviewed
+AlertaDengue runtime, find Makim with `command -v makim`. If it returns, for
+example, `/some/path/bin/makim`, set the private file's PATH to
+`PATH=/some/path/bin:/usr/local/bin:/usr/bin:/bin`. Use the existing Makim
+installation. The standard unit runs foreground `makim ingestion.watch` with
+the path and settle time only; recovery flags require a separate operator
+decision.
+
+Before enabling the unit, stop any watcher previously launched with
+`makim ingestion.watch-start` for the same incoming directory. Once systemd
+owns the watcher, do not use `ingestion.watch-start` or
+`ingestion.watch-stop` for normal lifecycle operations. Systemd is the sole
+process supervisor.
+
+After reviewing the private settings, activate and inspect the service:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now infodengue-sinan-watcher.service
+systemctl --user status infodengue-sinan-watcher.service
+systemctl --user is-active infodengue-sinan-watcher.service
+```
+
+Journald owns stdout and stderr. Read historical or live logs with:
+
+```sh
+journalctl --user -u infodengue-sinan-watcher.service
+journalctl --user -u infodengue-sinan-watcher.service -f
+```
+
+Use systemd for routine lifecycle operations:
+
+```sh
+systemctl --user stop infodengue-sinan-watcher.service
+systemctl --user start infodengue-sinan-watcher.service
+systemctl --user restart infodengue-sinan-watcher.service
+systemctl --user disable --now infodengue-sinan-watcher.service
+```
+
+The service uses `Restart=on-failure` with a five-second delay; a deliberate
+stop stays stopped. Systemd sends SIGTERM to the watcher main process and allows
+up to one hour for shutdown. The watcher stops its observer, cancels pending
+settle timers, and lets an active ingestion action finish before exiting. Pending
+files remain in the incoming directory for recovery on the next startup.
+
+The watcher holds a kernel advisory lock for its selected incoming directory, so
+a second foreground watcher for that path exits instead of running concurrently.
+Systemd also limits the named user service to one instance. Stop any existing
+`makim ingestion.watch-start` watcher before migrating supervision to systemd;
+systemd remains the normal lifecycle owner after migration.
+
+Startup reconciliation scans supported files already present in the incoming
+directory and schedules them through the same settle and action path. This closes
+the restart gap for files materialized while the watcher was down and does not
+enable `--include-existing`, `--requeue`, or `--allow-outdated`.
+Review journald after stopping it.
+
+Only in a controlled rehearsal while the watcher is idle and no SINAN file is
+being processed, inspect its main process and validate failure recovery:
+
+```sh
+systemctl --user show infodengue-sinan-watcher.service \
+  --property=MainPID --property=ActiveState --property=SubState
+systemctl --user kill --signal=SIGKILL infodengue-sinan-watcher.service
+sleep 6
+systemctl --user is-active infodengue-sinan-watcher.service
+```
+
+The final result should be `active`. Do not run this against active ingestion.
+In the same idle, controlled setting, verify the normal SIGTERM stop and start:
+
+```sh
+systemctl --user stop infodengue-sinan-watcher.service
+systemctl --user is-active infodengue-sinan-watcher.service
+systemctl --user start infodengue-sinan-watcher.service
+journalctl --user -u infodengue-sinan-watcher.service
+```
+
+The state check after stop should report `inactive`. If the watcher must start
+before the service user logs in, have the host administrator enable lingering
+for that service account, for example `loginctl enable-linger <service-user>`.
+
 ## Image identity
 
 Set `PIPELINE_IMAGE` and `PIPELINE_ANALYSIS_IMAGE` to reviewed, immutable image
@@ -161,7 +281,7 @@ RabbitMQ volumes hold persistent state.
 
 ## What is not validated yet
 
-Rendering this Compose file does not prove watcher supervision, production
+Rendering this Compose file does not prove watcher runtime supervision, production
 runtime connectivity, `load=true`, scientific SQL application, map generation,
 production backup/restore, retention, shadow execution, or production cutover.
 The staging E2E result described in [operations](operations.md) has a different
@@ -169,7 +289,9 @@ scope and used the staging profile.
 
 ## Next production gates
 
-- #8: watcher supervision.
+Watcher supervision is defined in this production profile. The remaining
+production gates are:
+
 - #9: production-profile deployment validation.
 - #10: `load=true` staging validation.
 - #11: operations, backup/restore, and retention.
