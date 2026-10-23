@@ -1,0 +1,24 @@
+[Unit]
+Description=InfoDengue SINAN ingestion watcher
+Documentation=https://github.com/esloch/infodengue-pipeline/blob/main/docs/production.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/services/infodengue/AlertaDengue
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=%h/.config/infodengue/sinan-watcher.env
+ExecStartPre=/usr/bin/test -d ${SINAN_WATCH_PATH}
+ExecStart=/usr/bin/env makim ingestion.watch --path ${SINAN_WATCH_PATH} --settle-time ${SINAN_WATCH_SETTLE_TIME}
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=30s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=infodengue-sinan-watcher
+
+[Install]
+WantedBy=default.target

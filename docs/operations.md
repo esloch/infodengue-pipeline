@@ -15,6 +15,9 @@ completed-run bridging, outbox publication, and READY workflow dispatch. The
 four queues remain separate: `pipeline.ingestion`, `pipeline.events`,
 `pipeline.orchestration`, and `pipeline.analysis`.
 
+The production-profile foreground SINAN watcher is supervised by the systemd
+user service described in [production](production.md#sinan-watcher-supervision).
+
 Compose starts `worker-analysis` on `pipeline.analysis` with Celery
 concurrency one. Its image extends the AlertaDengueAnalise image with the
 installed pipeline package and runs Makim as a child process. The scientific
