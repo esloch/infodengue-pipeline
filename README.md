@@ -29,7 +29,8 @@ validated RData and SQL output
 The pipeline does not parse SINAN content, import Django or R code, apply
 generated SQL by default, or own production storage. See
 [architecture](docs/architecture.md), [development](docs/development.md),
-[operations](docs/operations.md), and [migration](docs/migration.md).
+[operations](docs/operations.md), [production](docs/production.md), and
+[migration](docs/migration.md).
 
 ## Development
 
