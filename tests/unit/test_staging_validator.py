@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import yaml
 
 from infodengue_pipeline.config import Settings
 from infodengue_pipeline.db.models import (
@@ -202,12 +203,18 @@ def test_staging_validator_defaults_allow_real_analysis_duration() -> None:
     """Both validator entry points allow a bounded two-hour E2E run."""
     root = Path(__file__).resolve().parents[2]
     script = (root / 'scripts/validate_staging_e2e.py').read_text()
-    makim = (root / '.makim.yaml').read_text()
+    makim = yaml.safe_load((root / '.makim.yaml').read_text())
     assert (
         "parser.add_argument('--timeout-seconds', type=float, default=7200)"
         in script
     )
-    assert '            default: 7200' in makim
+    for task_name in ('e2e', 'validate-e2e'):
+        timeout = makim['groups']['staging']['tasks'][task_name]['args'][
+            'timeout-seconds'
+        ]
+        assert timeout['type'] == 'string'
+        assert isinstance(timeout['default'], str)
+        assert float(timeout['default']) == 7200
 
 
 @pytest.mark.parametrize(
