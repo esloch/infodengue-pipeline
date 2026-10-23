@@ -244,7 +244,10 @@ be configured with concurrency one, reports the analysis image digest and
 `analysis_load=false`, and checks all five workers are healthy. It neither
 starts services nor applies migrations. The database probes execute only
 `SELECT`; the MinIO probe checks bucket accessibility without uploading an
-object. Filesystem checks do not create files.
+object. Filesystem checks do not create files. The analysis image must have a
+complete, lowercase 64-character SHA-256 digest. Compose commands and network
+probes have bounded timeouts; a timeout exits nonzero with the affected
+boundary's name.
 
 Expected successful output includes named `...: ok` checks and ends with
 `production validation passed`. A failure exits nonzero and names the failed

@@ -8,6 +8,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from infodengue_pipeline.production.validate import valid_analysis_image
+
+_COMPOSE_TIMEOUT_SECONDS = 15
+_WORKER_TIMEOUT_SECONDS = 60
 _COMPOSE = (
     'docker',
     'compose',
@@ -29,8 +33,19 @@ def command(*args: str) -> str:
     """Return Compose output while suppressing secret-bearing diagnostics."""
     try:
         result = subprocess.run(
-            (*_COMPOSE, *args), capture_output=True, text=True, check=False
+            (*_COMPOSE, *args),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=(
+                _WORKER_TIMEOUT_SECONDS
+                if args[0] == 'exec'
+                else _COMPOSE_TIMEOUT_SECONDS
+            ),
         )
+    except subprocess.TimeoutExpired as exc:
+        boundary = args[2] if args[0] == 'exec' else f'Compose {args[0]}'
+        raise RuntimeError(f'{boundary}: timed out') from exc
     except OSError as exc:
         raise RuntimeError('Docker Compose: unavailable') from exc
     if result.returncode:
@@ -60,7 +75,7 @@ def validate_config(config: Mapping[str, Any]) -> str:
         if '--concurrency=1' not in services[name]['command']:
             raise RuntimeError(f'{name}: configured concurrency must be 1')
     image = services['worker-analysis']['image']
-    if '@sha256:' not in image:
+    if not valid_analysis_image(image):
         raise RuntimeError('analysis image: immutable digest required')
     for name in _WORKERS:
         configured = services[name]['environment'].get(

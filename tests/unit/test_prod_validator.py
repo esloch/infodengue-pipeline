@@ -13,12 +13,14 @@ from infodengue_pipeline.production import validate as probes
 
 from scripts import validate_prod as host
 
+_IMAGE = 'example/analysis@sha256:' + 'a' * 64
+
 
 def settings(tmp_path: Path, **changes: object) -> Settings:
     """Build a safe production-shaped settings object for isolated probes."""
     defaults: dict[str, object] = {
         'environment': 'prod',
-        'analysis_image': 'example/analysis@sha256:1234',
+        'analysis_image': _IMAGE,
         'alerta_source_database_url': 'postgresql://reader:secret@source/db',
         'analysis_database_url': 'postgresql://analyst:secret@analysis/db',
         'incoming_root': tmp_path,
@@ -36,10 +38,28 @@ def test_ingestion_success_uses_read_only_probes(
     monkeypatch.setattr(probes, 'check_database', database)
     store = MagicMock()
     store.bucket_exists.return_value = True
-    monkeypatch.setattr(probes, 'build_object_store', lambda _s: store)
+    pool = MagicMock()
+    pool_options: dict[str, object] = {}
+
+    def make_pool(**options: object) -> MagicMock:
+        pool_options.update(options)
+        return pool
+
+    monkeypatch.setattr(probes.urllib3, 'PoolManager', make_pool)
+    monkeypatch.setattr(
+        probes,
+        'build_object_store',
+        lambda _s, *, http_client: store if http_client is pool else None,
+    )
     connection = MagicMock()
     connection.__enter__.return_value = connection
-    monkeypatch.setattr(probes, 'Connection', lambda *_a, **_k: connection)
+    broker_options: dict[str, object] = {}
+
+    def make_connection(*_args: object, **options: object) -> MagicMock:
+        broker_options.update(options)
+        return connection
+
+    monkeypatch.setattr(probes, 'Connection', make_connection)
 
     result = probes.validate('ingestion', settings(tmp_path))
 
@@ -51,6 +71,17 @@ def test_ingestion_success_uses_read_only_probes(
     assert database.call_args_list[0].kwargs == {'migration': True}
     store.bucket_exists.assert_called_once_with()
     assert connection.connect.call_count == 1
+    assert connection.connect.call_args.kwargs == {}
+    assert broker_options['connect_timeout'] == 5
+    assert broker_options['transport_options'] == {
+        'read_timeout': 5,
+        'write_timeout': 5,
+    }
+    assert pool_options['retries'] is False
+    timeout = pool_options['timeout']
+    assert isinstance(timeout, probes.Timeout)
+    assert timeout.connect_timeout == 5
+    pool.clear.assert_called_once_with()
 
 
 def test_analysis_success_and_permission_failure(
@@ -101,17 +132,41 @@ def test_unavailable_dependency_hides_credentials(
     assert 'secret' not in str(error.value)
 
 
+def test_minio_timeout_names_bucket_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stalled bucket probe reports MinIO and hides SDK diagnostics."""
+    monkeypatch.setattr(probes, 'check_database', lambda *_a, **_k: None)
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    monkeypatch.setattr(probes, 'Connection', lambda *_a, **_k: connection)
+    store = MagicMock()
+    store.bucket_exists.side_effect = TimeoutError('password=secret')
+    monkeypatch.setattr(probes, 'build_object_store', lambda *_a, **_k: store)
+    with pytest.raises(RuntimeError, match='MinIO bucket') as error:
+        probes.validate('ingestion', settings(tmp_path))
+    assert 'secret' not in str(error.value)
+
+
 def test_database_probe_issues_only_selects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Migration inspection executes SELECT statements and disposes engine."""
     engine = MagicMock()
     connection = engine.connect.return_value.__enter__.return_value
-    connection.execute.return_value.scalar_one.side_effect = [
-        1,
-        '0002_ingress_analysis_jobs',
+    connection.execute.return_value.scalars.return_value.all.return_value = [
+        'current_head'
     ]
-    monkeypatch.setattr(probes, 'create_engine', lambda *_a, **_k: engine)
+    options: dict[str, object] = {}
+
+    def make_engine(_url: str, **kwargs: object) -> MagicMock:
+        options.update(kwargs)
+        return engine
+
+    monkeypatch.setattr(probes, 'create_engine', make_engine)
+    monkeypatch.setattr(
+        probes, 'expected_migration_heads', lambda: {'current_head'}
+    )
 
     probes.check_database('postgresql://reader:secret@host/db', migration=True)
 
@@ -124,6 +179,10 @@ def test_database_probe_issues_only_selects(
         'SELECT 1 FROM pipeline.analysis_job LIMIT 1',
     ]
     engine.dispose.assert_called_once_with()
+    assert options['connect_args'] == {
+        'connect_timeout': 5,
+        'options': '-c statement_timeout=5000',
+    }
 
 
 def test_database_revision_failure_disposes_engine(
@@ -132,16 +191,50 @@ def test_database_revision_failure_disposes_engine(
     """An outdated migration is rejected without applying migrations."""
     engine = MagicMock()
     connection = engine.connect.return_value.__enter__.return_value
-    connection.execute.return_value.scalar_one.side_effect = [1, 'old']
+    connection.execute.return_value.scalars.return_value.all.return_value = [
+        'old'
+    ]
     monkeypatch.setattr(probes, 'create_engine', lambda *_a, **_k: engine)
+    monkeypatch.setattr(probes, 'expected_migration_heads', lambda: {'new'})
     with pytest.raises(RuntimeError, match='migrations are not at head'):
         probes.check_database('postgresql://reader@host/db', migration=True)
     engine.dispose.assert_called_once_with()
 
 
+def test_migration_heads_come_from_checked_in_scripts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The expected revision is read from Alembic instead of a constant."""
+    script = MagicMock()
+    script.get_heads.return_value = ['future_revision']
+    monkeypatch.setattr(
+        probes.ScriptDirectory, 'from_config', lambda _config: script
+    )
+    assert probes.expected_migration_heads() == {'future_revision'}
+
+
+@pytest.mark.parametrize(
+    'image',
+    [
+        'example/analysis@sha256:1234',
+        'example/analysis@sha256:' + 'g' * 64,
+        _IMAGE + '-suffix',
+        'example/analysis@sha256:' + 'A' * 64,
+        '@sha256:' + 'a' * 64,
+    ],
+)
+def test_incomplete_or_invalid_image_is_rejected(
+    tmp_path: Path, image: str
+) -> None:
+    """Both configuration layers require an anchored 64-digit hex digest."""
+    assert not probes.valid_analysis_image(image)
+    with pytest.raises(ValueError, match='analysis image'):
+        probes.validate('analysis', settings(tmp_path, analysis_image=image))
+
+
 def test_host_config_and_running_services() -> None:
     """Host checks topology, image provenance, state, and concurrency."""
-    image = 'example/analysis@sha256:1234'
+    image = _IMAGE
     config = {
         'services': {
             name: {
@@ -170,6 +263,27 @@ def test_host_config_and_running_services() -> None:
         host.validate_running(json.dumps(rows))
 
 
+def test_host_rejects_partial_analysis_digest() -> None:
+    """The host blocks invalid images before any live worker probe."""
+    image = 'example/analysis@sha256:short'
+    config = {
+        'services': {
+            name: {
+                'image': image,
+                'environment': {
+                    'INFODENGUE_PIPELINE_ENVIRONMENT': 'prod',
+                    'INFODENGUE_PIPELINE_ANALYSIS_LOAD': 'false',
+                    'INFODENGUE_PIPELINE_ANALYSIS_IMAGE': image,
+                },
+                'command': ['--concurrency=1'],
+            }
+            for name in host._WORKERS
+        }
+    }
+    with pytest.raises(RuntimeError, match='analysis image'):
+        host.validate_config(config)
+
+
 def test_host_main_runs_only_inspection_commands(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -178,7 +292,7 @@ def test_host_main_runs_only_inspection_commands(
     """The host orchestrator never starts services or executes migrations."""
     (tmp_path / '.env.prod').touch()
     monkeypatch.chdir(tmp_path)
-    image = 'example/analysis@sha256:1234'
+    image = _IMAGE
     config = {
         'services': {
             name: {
@@ -223,6 +337,38 @@ def test_compose_failure_suppresses_secret_diagnostics(
     monkeypatch.setattr(host.subprocess, 'run', lambda *_a, **_k: result)
     with pytest.raises(RuntimeError, match='Compose config failed') as error:
         host.command('config')
+    assert 'secret' not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ('args', 'boundary', 'seconds'),
+    [
+        (('config', '--format', 'json'), 'Compose config', 15),
+        (('ps', '--all', '--format', 'json'), 'Compose ps', 15),
+        (('exec', '-T', 'worker-analysis'), 'worker-analysis', 60),
+    ],
+)
+def test_compose_timeout_names_boundary_without_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    args: tuple[str, ...],
+    boundary: str,
+    seconds: int,
+) -> None:
+    """Every Compose operation has a bounded, credential-safe failure."""
+    seen: list[int] = []
+
+    def timeout(*_args: object, **kwargs: object) -> None:
+        seen.append(kwargs['timeout'])  # type: ignore[arg-type]
+        raise host.subprocess.TimeoutExpired(
+            cmd='docker password=secret',
+            timeout=seconds,
+            output='password=secret',
+        )
+
+    monkeypatch.setattr(host.subprocess, 'run', timeout)
+    with pytest.raises(RuntimeError, match=boundary) as error:
+        host.command(*args)
+    assert seen == [seconds]
     assert 'secret' not in str(error.value)
 
 
