@@ -8,6 +8,7 @@ from pathlib import Path
 from minio import Minio
 from minio.commonconfig import ENABLED
 from minio.lifecycleconfig import Expiration, LifecycleConfig, Rule
+from urllib3 import PoolManager
 
 from infodengue_pipeline.config import Settings
 from infodengue_pipeline.models import ObjectMetadata
@@ -115,13 +116,16 @@ class MinioObjectStore:
             temporary.unlink(missing_ok=True)
 
 
-def build_object_store(settings: Settings) -> MinioObjectStore:
+def build_object_store(
+    settings: Settings, *, http_client: PoolManager | None = None
+) -> MinioObjectStore:
     """Build the ingress adapter from central settings."""
     client = Minio(
         settings.minio_endpoint,
         access_key=settings.minio_access_key.get_secret_value(),
         secret_key=settings.minio_secret_key.get_secret_value(),
         secure=settings.minio_secure,
+        http_client=http_client,
     )
     return MinioObjectStore(
         client, settings.minio_bucket, settings.incoming_root
