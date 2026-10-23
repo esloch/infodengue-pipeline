@@ -224,6 +224,34 @@ docker compose \
   config --quiet
 ```
 
+## Read-only deployment validation
+
+On the staging host, point the private production-profile files at **staging
+resources only**, keep `INFODENGUE_PIPELINE_ANALYSIS_LOAD=false` in both files,
+and start the reviewed profile. Then run:
+
+```sh
+uv run makim prod.validate
+```
+
+The command inspects the rendered Compose configuration and the running worker
+states, then executes finite probes inside the ingestion and analysis workers.
+It checks pipeline PostgreSQL and migration revision, RabbitMQ, the runtime
+MinIO bucket, the read-only AlertaDengue source connection, the analysis
+database connection, the incoming bind, and analysis output permissions under
+the analysis worker's user. It requires both ingestion and analysis workers to
+be configured with concurrency one, reports the analysis image digest and
+`analysis_load=false`, and checks all five workers are healthy. It neither
+starts services nor applies migrations. The database probes execute only
+`SELECT`; the MinIO probe checks bucket accessibility without uploading an
+object. Filesystem checks do not create files.
+
+Expected successful output includes named `...: ok` checks and ends with
+`production validation passed`. A failure exits nonzero and names the failed
+boundary; database and Compose diagnostics are suppressed to avoid printing
+credentials. The check does not prove that the source or analysis role lacks
+write grants; provision and audit those roles separately.
+
 ## Starting the production profile
 
 These commands describe the production-profile lifecycle. Do not start the
@@ -281,9 +309,9 @@ RabbitMQ volumes hold persistent state.
 
 ## What is not validated yet
 
-Rendering this Compose file does not prove watcher runtime supervision, production
-runtime connectivity, `load=true`, scientific SQL application, map generation,
-production backup/restore, retention, shadow execution, or production cutover.
+The read-only validation does not prove watcher runtime supervision,
+`load=true`, scientific SQL application, map generation, production
+backup/restore, retention, shadow execution, or production cutover.
 The staging E2E result described in [operations](operations.md) has a different
 scope and used the staging profile.
 
@@ -292,7 +320,6 @@ scope and used the staging profile.
 Watcher supervision is defined in this production profile. The remaining
 production gates are:
 
-- #9: production-profile deployment validation.
 - #10: `load=true` staging validation.
 - #11: operations, backup/restore, and retention.
 - #12: shadow validation and cutover.

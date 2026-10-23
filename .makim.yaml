@@ -108,3 +108,9 @@ groups:
           python scripts/validate_staging_e2e.py
           --object-key "${{ args.object_key }}"
           --timeout-seconds "${{ args.timeout_seconds }}"
+
+  prod:
+    tasks:
+      validate:
+        help: Validate the running production profile without changing state
+        run: python scripts/validate_prod.py
