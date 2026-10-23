@@ -10,6 +10,7 @@ nav:
   - Architecture: architecture.md
   - Development: development.md
   - Operations: operations.md
+  - Production: production.md
   - Migration: migration.md
   - Future workloads: future-workloads.md
 theme:

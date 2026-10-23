@@ -24,6 +24,11 @@ explicitly approved and serialized for its database target.
 
 ## Guarded real staging E2E
 
+This section covers the staging E2E flow. The separate
+[production-profile deployment](production.md) defines a staging-host rehearsal
+with `environment=prod` and `analysis_load=false`; it has no staging E2E
+runner or validator.
+
 `containers/compose-staging.yaml` defines pipeline PostgreSQL and RabbitMQ,
 queue workers, Beat, the external staging integration network, the shared
 incoming bind mount, and shared analysis artifacts. It connects to the

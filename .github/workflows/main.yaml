@@ -28,6 +28,8 @@ jobs:
         run: uv run makim containers.config
       - name: Staging Compose config (placeholders only)
         run: uv run makim containers.staging-config
+      - name: Production Compose config (placeholders only)
+        run: uv run makim containers.prod-config
 
   analysis-image:
     runs-on: ubuntu-latest

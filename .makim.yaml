@@ -46,6 +46,13 @@ groups:
           PIPELINE_E2E_ENV_FILE=../.env.staging.e2e.example
           docker compose --env-file .env.staging.example
           -f containers/compose-staging.yaml config --quiet
+      prod-config:
+        help: Validate the production topology using placeholders only
+        run: >-
+          env PIPELINE_WORKER_ENV_FILE=../.env.prod.example
+          PIPELINE_ANALYSIS_ENV_FILE=../.env.prod.analysis.example
+          docker compose --env-file .env.prod.example
+          -f containers/compose-prod.yaml config --quiet
       up:
         help: Start development services
         run: docker compose --env-file .env.example -f containers/compose.yaml up -d --build
