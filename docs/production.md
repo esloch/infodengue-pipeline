@@ -48,6 +48,11 @@ socket.
 
 ## Staging-host rehearsal
 
+For the issue #9 manual acceptance sequence, use the
+[staging-host runbook](issue9-staging-rehearsal.md). Its image-digest, consumer
+isolation, prerequisite, and teardown gates must be completed before running
+the full profile on staging.
+
 Use these non-secret values in the private rehearsal configuration, alongside
 staging-only credentials and staging-only database and MinIO URLs:
 
