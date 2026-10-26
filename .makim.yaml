@@ -114,3 +114,44 @@ groups:
       validate:
         help: Validate the running production profile without changing state
         run: python scripts/validate_prod.py
+      analysis-e2e:
+        help: Run one operator-gated scientific analysis on isolated staging
+        backend: bash
+        args:
+          fixture:
+            help: Path to fresh sanitized SINAN fixture
+            type: string
+            required: true
+          backup:
+            help: Path to verified staging dump
+            type: string
+            required: true
+          restore-proof:
+            help: Path to restore proof JSON
+            type: string
+            required: true
+          backup-sha256:
+            help: SHA-256 of the staging dump
+            type: string
+            required: true
+          expected-host:
+            help: Verified staging analysis DB host
+            type: string
+            required: true
+          expected-database:
+            help: Verified staging analysis DB name
+            type: string
+            required: true
+          expected-role:
+            help: Verified staging analysis DB role
+            type: string
+            required: true
+        run: >-
+          bash scripts/run_prod_analysis_e2e.sh
+          '${{ args.fixture | replace("'", "'\"'\"'") }}'
+          '${{ args.backup | replace("'", "'\"'\"'") }}'
+          '${{ args.restore_proof | replace("'", "'\"'\"'") }}'
+          '${{ args.backup_sha256 }}'
+          '${{ args.expected_host }}'
+          '${{ args.expected_database }}'
+          '${{ args.expected_role }}'

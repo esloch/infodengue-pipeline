@@ -175,6 +175,40 @@ def validate_outputs(output_dir: Path, request: AnalysisJobRequest) -> None:
             raise ValueError('missing non-empty incidence map output')
 
 
+def require_staging_load_target(
+    settings: Settings, request: AnalysisJobRequest, database_url: str
+) -> None:
+    """Gate scientific writes in the prod profile."""
+    if settings.environment != 'prod' or not request.load:
+        return
+    parsed = make_url(database_url)
+    expected = (
+        settings.analysis_staging_target_host,
+        settings.analysis_staging_target_database,
+        settings.analysis_staging_target_role,
+    )
+    if (
+        not settings.analysis_staging_backup_verified
+        or any(not part for part in expected)
+        or (parsed.host, parsed.database, parsed.username) != expected
+        or request.coverage.value != settings.analysis_e2e_coverage
+        or str(request.epiweek) != settings.analysis_e2e_epiweek
+    ):
+        raise ValueError('production analysis staging load gate failed')
+    engine = create_engine(database_url, hide_parameters=True)
+    try:
+        with engine.connect() as connection:
+            identity = connection.execute(
+                text('SELECT current_database(), current_user')
+            ).one()
+            if tuple(identity) != expected[1:]:
+                raise ValueError(
+                    'production analysis staging load gate failed'
+                )
+    finally:
+        engine.dispose()
+
+
 class InContainerAnalysisRunner:
     """Execute the scientific process in the analysis worker container."""
 
@@ -196,6 +230,7 @@ class InContainerAnalysisRunner:
         if settings.analysis_database_url is None:
             raise ValueError('analysis database URL is not configured')
         database_url = settings.analysis_database_url.get_secret_value()
+        require_staging_load_target(settings, request, database_url)
         database = make_url(database_url)
         if not database.host or not database.database or not database.username:
             raise ValueError('analysis database URL is incomplete')

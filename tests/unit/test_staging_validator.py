@@ -342,6 +342,7 @@ def test_reusable_validator_correlates_current_job(
             else None
         ),
         attempts=1,
+        load=False,
         cores=1,
         output_dir='/tmp/artifacts',
     )

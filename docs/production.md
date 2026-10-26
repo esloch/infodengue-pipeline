@@ -48,6 +48,11 @@ socket.
 
 ## Staging-host rehearsal
 
+For the issue #10 `analysis_load=true` scientific write rehearsal, follow the
+[controlled staging analysis runbook](issue10-staging-analysis-e2e.md). Its
+backup, target identity, scoped grant, fixture and evidence gates are required
+before any mutating execution. The issue #9 sequence below remains read-only.
+
 For the issue #9 manual acceptance sequence, use the
 [staging-host runbook](issue9-staging-rehearsal.md). Its image-digest, consumer
 isolation, prerequisite, and teardown gates must be completed before running

@@ -55,6 +55,11 @@ artifact checks. SQL application and map generation were not exercised. See
 [operations](docs/operations.md) for the validated scope. No production
 cutover is claimed.
 
+Issue #10's production-profile scientific load procedure is documented in the
+[staging analysis runbook](docs/issue10-staging-analysis-e2e.md). It requires a
+separate manual staging execution and has not established scientific acceptance
+from local tests.
+
 ## License
 
 GNU General Public License version 3. See [LICENSE](LICENSE).

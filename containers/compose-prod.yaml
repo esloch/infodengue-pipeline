@@ -214,6 +214,27 @@ services:
       timeout: 5s
       retries: 5
 
+  analysis-e2e-runner:
+    profiles: ["analysis-e2e"]
+    image: ${PIPELINE_IMAGE:?set pipeline image}
+    env_file:
+      - ${PIPELINE_WORKER_ENV_FILE:-../.env.prod}
+      - path: ${PIPELINE_E2E_ENV_FILE:-../.env.prod.e2e}
+        required: false
+    environment:
+      INFODENGUE_PIPELINE_ENVIRONMENT: prod
+      INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
+    command: ["python", "scripts/run_prod_analysis_e2e.py"]
+    restart: "no"
+    networks:
+      - default
+      - prod_integrations
+    volumes:
+      - ${PROD_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output:ro
+      - ${PROD_E2E_FIXTURE_HOST_PATH:-../.env.prod.example}:/e2e/fixture:ro
+      - ${PROD_E2E_BACKUP_HOST_PATH:-../.env.prod.example}:/e2e/backup:ro
+      - ${PROD_E2E_RESTORE_PROOF_HOST_PATH:-../.env.prod.example}:/e2e/restore-proof:ro
+
 volumes:
   pipeline_prod_pgdata:
   pipeline_prod_rabbitmq:
