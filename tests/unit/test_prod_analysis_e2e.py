@@ -17,9 +17,19 @@ from infodengue_pipeline.production.analysis_e2e import (
     run,
     validate_artifacts,
     verify_backup,
+    verify_restore_marker,
+    verify_source_staging,
     verify_target,
 )
 from pydantic import SecretStr
+
+
+@pytest.fixture(autouse=True)
+def staging_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the non-secret staging network identity in guarded unit tests."""
+    monkeypatch.setenv(
+        'PROD_INTEGRATION_NETWORK', 'infodengue-staging_infodengue'
+    )
 
 
 def settings(**overrides: object) -> Settings:
@@ -28,11 +38,13 @@ def settings(**overrides: object) -> Settings:
         'environment': 'prod',
         'analysis_load': True,
         'minio_prefix': 'issue10/',
+        'minio_bucket': 'issue10-fixtures',
+        'minio_endpoint': 'minio:9000',
         'analysis_database_url': SecretStr(
-            'postgresql+psycopg://scoped:secret@staging-db:5432/alerta_stage'
+            'postgresql+psycopg://analysis_e2e_writer:secret@analysis-e2e-db:5432/analysis_e2e'
         ),
         'alerta_source_database_url': SecretStr(
-            'postgresql+psycopg://reader:secret@staging-db:5432/alerta_stage'
+            'postgresql+psycopg://reader:secret@postgres:5432/alerta'
         ),
     }
     values.update(overrides)
@@ -45,12 +57,40 @@ def test_profile_rejections() -> None:
         require_profile(settings(environment='staging'))
     with pytest.raises(ValueError, match='analysis_load=false'):
         require_profile(settings(analysis_load=False))
+    with pytest.raises(ValueError, match='external staging scope'):
+        require_profile(settings(minio_endpoint='production:9000'))
+
+
+def test_source_identity_and_read_role() -> None:
+    """The source connection must be on staging and unable to mutate runs."""
+    with pytest.raises(ValueError, match='source database is not staging'):
+        verify_source_staging(
+            settings(
+                alerta_source_database_url=SecretStr(
+                    'postgresql+psycopg://reader:secret@production/alerta'
+                )
+            )
+        )
+    with patch(
+        'infodengue_pipeline.production.analysis_e2e.create_engine'
+    ) as create:
+        connection = (
+            create.return_value.connect.return_value.__enter__.return_value
+        )
+        connection.execute.return_value.one.return_value = ('alerta', 'reader')
+        connection.execute.return_value.scalar_one.return_value = False
+        verify_source_staging(settings())
+        connection.execute.return_value.scalar_one.return_value = True
+        with pytest.raises(ValueError, match='source role is writable'):
+            verify_source_staging(settings())
 
 
 def test_target_rejection_without_connection() -> None:
     """A mismatched operator target fails before a network probe."""
     with pytest.raises(ValueError, match='target is not staging'):
-        verify_target(settings(), Target('wrong', 'alerta_stage', 'scoped'))
+        verify_target(
+            settings(), Target('wrong', 'analysis_e2e', 'analysis_e2e_writer')
+        )
 
 
 def test_backup_requires_digest_and_restore_evidence(tmp_path: Path) -> None:
@@ -59,19 +99,19 @@ def test_backup_requires_digest_and_restore_evidence(tmp_path: Path) -> None:
     backup.write_bytes(b'PGDMP example')
     digest = hashlib.sha256(backup.read_bytes()).hexdigest()
     proof = tmp_path / 'restore.json'
-    target = Target('staging-db', 'alerta_stage', 'scoped')
+    target = Target('analysis-e2e-db', 'analysis_e2e', 'analysis_e2e_writer')
     with pytest.raises(ValueError, match='backup not verified'):
         verify_backup(backup, digest, proof, target)
     proof.write_text(
         json.dumps(
             {
                 'backup_sha256': digest,
-                'source_host': target.host,
-                'source_database': target.database,
-                'source_role': target.role,
+                'source_host': 'staging-source-db',
+                'source_database': 'alerta_staging',
+                'source_role': 'staging_backup',
                 'source_environment': 'staging',
                 'restore_test_succeeded': True,
-                'restored_database': 'alerta_restore_test',
+                'restored_database': target.database,
             }
         )
     )
@@ -91,7 +131,9 @@ def test_missing_execution_gate_does_not_probe_or_upload(
             run(
                 settings(),
                 tmp_path / 'fixture.csv',
-                Target('staging-db', 'alerta_stage', 'scoped'),
+                Target(
+                    'analysis-e2e-db', 'analysis_e2e', 'analysis_e2e_writer'
+                ),
                 tmp_path / 'backup',
                 '0' * 64,
                 tmp_path / 'proof',
@@ -108,6 +150,12 @@ def test_freshness_failure_preserves_object_store(tmp_path: Path) -> None:
         patch('infodengue_pipeline.production.analysis_e2e.verify_target'),
         patch('infodengue_pipeline.production.analysis_e2e.verify_backup'),
         patch(
+            'infodengue_pipeline.production.analysis_e2e.verify_restore_marker'
+        ),
+        patch(
+            'infodengue_pipeline.production.analysis_e2e.verify_source_staging'
+        ),
+        patch(
             'infodengue_pipeline.production.analysis_e2e.build_source'
         ) as source,
         patch(
@@ -119,7 +167,9 @@ def test_freshness_failure_preserves_object_store(tmp_path: Path) -> None:
             run(
                 settings(),
                 fixture,
-                Target('staging-db', 'alerta_stage', 'scoped'),
+                Target(
+                    'analysis-e2e-db', 'analysis_e2e', 'analysis_e2e_writer'
+                ),
                 tmp_path / 'backup',
                 '0' * 64,
                 tmp_path / 'proof',
@@ -136,6 +186,12 @@ def test_success_reuses_existing_ingestion_validator(tmp_path: Path) -> None:
     with (
         patch('infodengue_pipeline.production.analysis_e2e.verify_target'),
         patch('infodengue_pipeline.production.analysis_e2e.verify_backup'),
+        patch(
+            'infodengue_pipeline.production.analysis_e2e.verify_restore_marker'
+        ),
+        patch(
+            'infodengue_pipeline.production.analysis_e2e.verify_source_staging'
+        ),
         patch(
             'infodengue_pipeline.production.analysis_e2e.build_source'
         ) as source,
@@ -154,7 +210,7 @@ def test_success_reuses_existing_ingestion_validator(tmp_path: Path) -> None:
         result = run(
             settings(),
             fixture,
-            Target('staging-db', 'alerta_stage', 'scoped'),
+            Target('analysis-e2e-db', 'analysis_e2e', 'analysis_e2e_writer'),
             tmp_path / 'backup',
             '0' * 64,
             tmp_path / 'proof',
@@ -176,6 +232,12 @@ def test_duplicate_attempts_fail(tmp_path: Path) -> None:
         patch('infodengue_pipeline.production.analysis_e2e.verify_target'),
         patch('infodengue_pipeline.production.analysis_e2e.verify_backup'),
         patch(
+            'infodengue_pipeline.production.analysis_e2e.verify_restore_marker'
+        ),
+        patch(
+            'infodengue_pipeline.production.analysis_e2e.verify_source_staging'
+        ),
+        patch(
             'infodengue_pipeline.production.analysis_e2e.build_source'
         ) as source,
         patch('infodengue_pipeline.production.analysis_e2e.writer_client'),
@@ -191,7 +253,9 @@ def test_duplicate_attempts_fail(tmp_path: Path) -> None:
             run(
                 settings(),
                 fixture,
-                Target('staging-db', 'alerta_stage', 'scoped'),
+                Target(
+                    'analysis-e2e-db', 'analysis_e2e', 'analysis_e2e_writer'
+                ),
                 tmp_path / 'backup',
                 '0' * 64,
                 tmp_path / 'proof',
@@ -201,7 +265,7 @@ def test_duplicate_attempts_fail(tmp_path: Path) -> None:
 
 def test_live_target_identity_is_verified() -> None:
     """The effective database identity must match the declared target."""
-    target = Target('staging-db', 'alerta_stage', 'scoped')
+    target = Target('analysis-e2e-db', 'analysis_e2e', 'analysis_e2e_writer')
     with patch(
         'infodengue_pipeline.production.analysis_e2e.create_engine'
     ) as create:
@@ -209,13 +273,30 @@ def test_live_target_identity_is_verified() -> None:
             create.return_value.connect.return_value.__enter__.return_value
         )
         connection.execute.return_value.one.return_value = (
-            'alerta_stage',
-            'scoped',
+            'analysis_e2e',
+            'analysis_e2e_writer',
         )
         verify_target(settings(), target)
-        connection.execute.return_value.one.return_value = ('wrong', 'scoped')
+        connection.execute.return_value.one.return_value = (
+            'wrong',
+            'analysis_e2e_writer',
+        )
         with pytest.raises(ValueError, match='target is not staging'):
             verify_target(settings(), target)
+
+
+def test_restored_clone_marker_must_match_dump() -> None:
+    """A JSON declaration cannot stand in for the restored DB marker."""
+    with patch(
+        'infodengue_pipeline.production.analysis_e2e.create_engine'
+    ) as create:
+        connection = (
+            create.return_value.connect.return_value.__enter__.return_value
+        )
+        connection.execute.return_value.scalar_one.return_value = 'a' * 64
+        verify_restore_marker(settings(), 'a' * 64)
+        with pytest.raises(ValueError, match='backup not verified'):
+            verify_restore_marker(settings(), 'b' * 64)
 
 
 def _artifact_result(tmp_path: Path) -> Mock:

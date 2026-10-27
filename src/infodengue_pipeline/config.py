@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     analysis_staging_target_database: str | None = None
     analysis_staging_target_role: str | None = None
     analysis_staging_backup_verified: bool = False
+    analysis_staging_backup_sha256: str | None = None
     analysis_e2e_coverage: str | None = None
     analysis_e2e_epiweek: str | None = None
     analysis_timeout_seconds: int = Field(default=21600, ge=1)

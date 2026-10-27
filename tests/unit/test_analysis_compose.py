@@ -213,6 +213,7 @@ def test_production_service_set_and_privilege_boundary() -> None:
         'worker-analysis',
         'worker-beat',
         'analysis-e2e-runner',
+        'analysis-e2e-db',
     }
     assert names.isdisjoint({'validator', 'e2e-runner', 'minio', 'minio-init'})
     for forbidden in (
@@ -229,10 +230,14 @@ def test_production_service_set_and_privilege_boundary() -> None:
         assert forbidden not in text
     assert 'name: infodengue-pipeline-prod' in text
     assert '    build:' not in text
-    for name in names - {'postgres', 'rabbitmq'}:
+    for name in names - {'postgres', 'rabbitmq', 'analysis-e2e-db'}:
         assert 'INFODENGUE_PIPELINE_ENVIRONMENT: prod' in _service_section(
             'compose-prod.yaml', name
         )
+    clone = _service_section('compose-prod.yaml', 'analysis-e2e-db')
+    assert 'profiles: ["analysis-e2e-db"]' in clone
+    assert 'pipeline_prod_analysis_e2e_pgdata' in clone
+    assert '    ports:' not in clone
 
 
 def test_production_workers_are_gated_by_successful_migration() -> None:

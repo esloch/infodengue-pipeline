@@ -57,4 +57,6 @@ jobs:
           -ec 'pwd; python --version; python -c "import infodengue_pipeline; print(infodengue_pipeline.__file__)";
           R --version; celery --version; makim --version; makim deps.check;
           makim pipeline.refresh-alertas-job --help;
+          test "$(command -v psql)" = /usr/local/bin/psql;
+          test -x /opt/conda/envs/alertadengueanalise/bin/psql;
           if command -v docker >/dev/null 2>&1; then echo "Docker CLI unexpectedly present"; exit 1; fi'

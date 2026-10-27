@@ -9,17 +9,18 @@ from infodengue_pipeline.analysis.runner import require_staging_load_target
 from infodengue_pipeline.config import Settings
 from infodengue_pipeline.models import AnalysisJobRequest, Coverage, Epiweek
 
-URL = 'postgresql+psycopg://scoped:secret@staging-db:5432/alerta_stage'
+URL = 'postgresql+psycopg://analysis_e2e_writer:secret@analysis-e2e-db:5432/analysis_e2e'
 
 
 def _settings(**changes: object) -> Settings:
     values: dict[str, object] = {
         'environment': 'prod',
         'analysis_load': True,
-        'analysis_staging_target_host': 'staging-db',
-        'analysis_staging_target_database': 'alerta_stage',
-        'analysis_staging_target_role': 'scoped',
+        'analysis_staging_target_host': 'analysis-e2e-db',
+        'analysis_staging_target_database': 'analysis_e2e',
+        'analysis_staging_target_role': 'analysis_e2e_writer',
         'analysis_staging_backup_verified': True,
+        'analysis_staging_backup_sha256': 'a' * 64,
         'analysis_e2e_coverage': 'MG',
         'analysis_e2e_epiweek': '202412',
     }
@@ -51,19 +52,22 @@ def test_load_gate_requires_configured_and_effective_target() -> None:
     """Matching URL text alone does not establish the effective role."""
     with pytest.raises(ValueError, match='staging load gate failed'):
         require_staging_load_target(
-            _settings(), _request(), URL.replace('scoped', 'other')
+            _settings(),
+            _request(),
+            URL.replace('analysis_e2e_writer', 'other'),
         )
     with patch('infodengue_pipeline.analysis.runner.create_engine') as create:
         connection = (
             create.return_value.connect.return_value.__enter__.return_value
         )
         connection.execute.return_value.one.return_value = (
-            'alerta_stage',
-            'scoped',
+            'analysis_e2e',
+            'analysis_e2e_writer',
         )
+        connection.execute.return_value.scalar_one.return_value = 'a' * 64
         require_staging_load_target(_settings(), _request(), URL)
         connection.execute.return_value.one.return_value = (
-            'alerta_stage',
+            'analysis_e2e',
             'wrong',
         )
         with pytest.raises(ValueError, match='staging load gate failed'):

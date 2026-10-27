@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
 import re
 import struct
 
@@ -16,6 +17,12 @@ from sqlalchemy.engine import make_url
 
 from infodengue_pipeline.config import Settings
 from infodengue_pipeline.ingestion.completion import build_source
+from infodengue_pipeline.production.target import (
+    ANALYSIS_E2E_DATABASE,
+    ANALYSIS_E2E_HOST,
+    ANALYSIS_E2E_ROLE,
+    RESTORE_EVIDENCE_SQL,
+)
 from infodengue_pipeline.staging.e2e import ValidationResult, validate_e2e
 from infodengue_pipeline.staging.runner import (
     Fixture,
@@ -112,21 +119,78 @@ def require_profile(settings: Settings) -> None:
         raise ValueError('production analysis E2E failed: analysis_load=false')
     if not settings.minio_prefix or not settings.minio_prefix.endswith('/'):
         raise ValueError('production analysis E2E failed: unsafe MinIO prefix')
+    if (
+        os.environ.get('PROD_INTEGRATION_NETWORK')
+        != 'infodengue-staging_infodengue'
+        or settings.minio_endpoint != 'minio:9000'
+        or settings.minio_secure
+        or not settings.minio_bucket.startswith('issue10-')
+        or not settings.minio_prefix.startswith('issue10/')
+    ):
+        raise ValueError(
+            'production analysis E2E failed: external staging scope unverified'
+        )
+
+
+def verify_source_staging(settings: Settings) -> None:
+    """Check the AlertaDengue read connection on the staging network."""
+    secret = settings.alerta_source_database_url
+    if secret is None:
+        raise ValueError('production analysis E2E failed: source DB absent')
+    url = secret.get_secret_value()
+    parsed = make_url(url)
+    if parsed.host != 'postgres' or parsed.database != 'alerta':
+        raise ValueError(
+            'production analysis E2E failed: source database is not staging'
+        )
+    engine = create_engine(url, hide_parameters=True)
+    try:
+        with engine.connect() as connection:
+            actual = connection.execute(
+                text('SELECT current_database(), current_user')
+            ).one()
+            if tuple(actual) != ('alerta', parsed.username):
+                raise ValueError(
+                    'production analysis E2E failed: source identity differs'
+                )
+            writable = connection.execute(
+                text(
+                    'SELECT has_table_privilege(current_user, '
+                    "'ingestion.run', "
+                    "'INSERT') OR has_table_privilege(current_user, "
+                    "'ingestion.run', 'UPDATE') OR has_table_privilege("
+                    "current_user, 'ingestion.run', 'DELETE')"
+                )
+            ).scalar_one()
+            if writable:
+                raise ValueError(
+                    'production analysis E2E failed: source role is writable'
+                )
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(
+            'production analysis E2E failed: source database probe failed'
+        ) from exc
+    finally:
+        engine.dispose()
 
 
 def verify_target(settings: Settings, expected: Target) -> None:
-    """Match configured and effective host, database, and role to staging."""
+    """Require the fixed isolated clone and its effective DB identity."""
     secret = settings.analysis_database_url
     if secret is None:
         raise ValueError('production analysis E2E failed: analysis DB absent')
     url = secret.get_secret_value()
     parsed = make_url(url)
-    if (
-        not expected.host
-        or not expected.database
-        or not expected.role
-        or (parsed.host, parsed.database, parsed.username)
-        != (expected.host, expected.database, expected.role)
+    if (expected.host, expected.database, expected.role) != (
+        ANALYSIS_E2E_HOST,
+        ANALYSIS_E2E_DATABASE,
+        ANALYSIS_E2E_ROLE,
+    ) or (parsed.host, parsed.database, parsed.username) != (
+        expected.host,
+        expected.database,
+        expected.role,
     ):
         raise ValueError(_TARGET_FAILURE)
     engine = create_engine(url, hide_parameters=True)
@@ -142,6 +206,29 @@ def verify_target(settings: Settings, expected: Target) -> None:
     except Exception as exc:
         raise RuntimeError(
             'production analysis E2E failed: target database probe failed'
+        ) from exc
+    finally:
+        engine.dispose()
+
+
+def verify_restore_marker(settings: Settings, digest: str) -> None:
+    """Tie the verified dump to an independently restored clone marker."""
+    secret = settings.analysis_database_url
+    if secret is None:
+        raise ValueError(_BACKUP_FAILURE)
+    engine = create_engine(secret.get_secret_value(), hide_parameters=True)
+    try:
+        with engine.connect() as connection:
+            actual = connection.execute(
+                text(RESTORE_EVIDENCE_SQL), {'environment': 'staging'}
+            ).scalar_one()
+            if actual != digest:
+                raise ValueError(_BACKUP_FAILURE)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(
+            'production analysis E2E failed: restore marker query failed'
         ) from exc
     finally:
         engine.dispose()
@@ -172,12 +259,13 @@ def verify_backup(
         verified = (
             proof['backup_sha256'] == digest
             and proof['source_environment'] == 'staging'
-            and proof['source_host'] == expected.host
-            and proof['source_database'] == expected.database
-            and proof['source_role'] == expected.role
+            and bool(proof['source_host'])
+            and proof['source_host'] != expected.host
+            and bool(proof['source_database'])
+            and proof['source_database'] != expected.database
+            and bool(proof['source_role'])
             and proof['restore_test_succeeded'] is True
-            and proof['restored_database'] != expected.database
-            and bool(proof['restored_database'])
+            and proof['restored_database'] == expected.database
         )
     except (OSError, ValueError, KeyError, TypeError):
         verified = False
@@ -206,6 +294,8 @@ def run(
         raise ValueError('production analysis E2E failed: invalid timeout')
     verify_target(settings, expected)
     verify_backup(backup, backup_sha256, restore_proof, expected)
+    verify_restore_marker(settings, backup_sha256)
+    verify_source_staging(settings)
     if not fixture_path.is_file() or fixture_path.suffix.lower() not in {
         '.csv',
         '.dbf',

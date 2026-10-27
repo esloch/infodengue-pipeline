@@ -26,4 +26,11 @@ RUN python -m pip install --no-cache-dir \
     && python -c 'import infodengue_pipeline' \
     && rm -r /tmp/pipeline-dist
 
+# The pinned scientific Makim task invokes `psql -f` by name. The earlier PATH
+# entry reviews the generated SQL before forwarding to the real client.
+COPY scripts/reviewed_psql.py /usr/local/bin/psql
+RUN test -x /opt/conda/envs/alertadengueanalise/bin/psql \
+    && chmod 0755 /usr/local/bin/psql
+ENV PATH="/usr/local/bin:${PATH}"
+
 WORKDIR /opt/alertadengueanalise

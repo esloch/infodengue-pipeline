@@ -21,6 +21,12 @@ from infodengue_pipeline.models import (
     AnalysisJobRequest,
     AnalysisJobResult,
 )
+from infodengue_pipeline.production.target import (
+    ANALYSIS_E2E_DATABASE,
+    ANALYSIS_E2E_HOST,
+    ANALYSIS_E2E_ROLE,
+    RESTORE_EVIDENCE_SQL,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -183,13 +189,17 @@ def require_staging_load_target(
         return
     parsed = make_url(database_url)
     expected = (
-        settings.analysis_staging_target_host,
-        settings.analysis_staging_target_database,
-        settings.analysis_staging_target_role,
+        ANALYSIS_E2E_HOST,
+        ANALYSIS_E2E_DATABASE,
+        ANALYSIS_E2E_ROLE,
     )
     if (
         not settings.analysis_staging_backup_verified
-        or any(not part for part in expected)
+        or not settings.analysis_staging_backup_sha256
+        or len(settings.analysis_staging_backup_sha256) != 64
+        or settings.analysis_staging_target_host != expected[0]
+        or settings.analysis_staging_target_database != expected[1]
+        or settings.analysis_staging_target_role != expected[2]
         or (parsed.host, parsed.database, parsed.username) != expected
         or request.coverage.value != settings.analysis_e2e_coverage
         or str(request.epiweek) != settings.analysis_e2e_epiweek
@@ -204,6 +214,13 @@ def require_staging_load_target(
             if tuple(identity) != expected[1:]:
                 raise ValueError(
                     'production analysis staging load gate failed'
+                )
+            restored = connection.execute(
+                text(RESTORE_EVIDENCE_SQL), {'environment': 'staging'}
+            ).scalar_one()
+            if restored != settings.analysis_staging_backup_sha256:
+                raise ValueError(
+                    'production analysis staging restore gate failed'
                 )
     finally:
         engine.dispose()

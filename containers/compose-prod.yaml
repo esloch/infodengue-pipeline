@@ -42,6 +42,22 @@ services:
       retries: 12
     restart: unless-stopped
 
+  analysis-e2e-db:
+    profiles: ["analysis-e2e-db"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: analysis_e2e
+      POSTGRES_USER: analysis_e2e_admin
+      POSTGRES_PASSWORD: ${PIPELINE_ANALYSIS_E2E_DB_PASSWORD:-}
+    volumes:
+      - pipeline_prod_analysis_e2e_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analysis_e2e_admin -d analysis_e2e"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: "no"
+
   migrate:
     image: ${PIPELINE_IMAGE:?set pipeline image}
     env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.prod}
@@ -238,6 +254,7 @@ services:
 volumes:
   pipeline_prod_pgdata:
   pipeline_prod_rabbitmq:
+  pipeline_prod_analysis_e2e_pgdata:
 
 networks:
   prod_integrations:
