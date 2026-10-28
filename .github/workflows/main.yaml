@@ -41,6 +41,10 @@ jobs:
           repository: AlertaDengue/AlertaDengueAnalise
           ref: 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
           path: analysis-source
+      - name: Verify pinned scientific checkout
+        run: >-
+          test "$(git -C analysis-source rev-parse HEAD)"
+          = 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
       - name: Build pinned scientific base image
         run: >-
           docker build -t alertadengueanalise:ci
@@ -49,6 +53,7 @@ jobs:
         run: >-
           docker build
           --build-arg ALERTA_ANALYSIS_BASE_IMAGE=alertadengueanalise:ci
+          --build-arg ALERTA_ANALYSIS_REVISION=27a03f26a9bf366597ef135e7da8d2f620ea9a8e
           -t infodengue-pipeline-analysis:ci
           -f containers/Dockerfile.analysis .
       - name: Verify scientific runtime in the worker image
@@ -59,4 +64,10 @@ jobs:
           makim pipeline.refresh-alertas-job --help;
           test "$(command -v psql)" = /usr/local/bin/psql;
           test -x /opt/conda/envs/alertadengueanalise/bin/psql;
+          test "$(grep -c "/usr/local/bin/psql " /opt/alertadengueanalise/.makim.yaml)" -eq 2;
           if command -v docker >/dev/null 2>&1; then echo "Docker CLI unexpectedly present"; exit 1; fi'
+      - name: Verify pinned scientific revision label
+        run: >-
+          test "$(docker image inspect infodengue-pipeline-analysis:ci
+          --format '{{ index .Config.Labels "org.infodengue.alertadengueanalise.revision" }}')"
+          = 27a03f26a9bf366597ef135e7da8d2f620ea9a8e

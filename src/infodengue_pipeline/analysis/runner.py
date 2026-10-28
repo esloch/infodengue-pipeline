@@ -272,6 +272,19 @@ class InContainerAnalysisRunner:
                 'ALERTA_INPUT_FINGERPRINT': request.input_fingerprint,
             }
         )
+        if settings.environment == 'prod' and request.load:
+            # The pinned Makim task is image-patched to invoke this wrapper
+            # by absolute path. Pass the review gate from validated settings,
+            # never from inherited process environment.
+            env.update(
+                {
+                    'INFODENGUE_PIPELINE_ENVIRONMENT': 'prod',
+                    'INFODENGUE_PIPELINE_ANALYSIS_LOAD': 'true',
+                    'INFODENGUE_PIPELINE_ANALYSIS_STAGING_BACKUP_SHA256': (
+                        settings.analysis_staging_backup_sha256 or ''
+                    ),
+                }
+            )
         log_path = output_dir / 'pipeline-runner.log'
         logger.info(
             'analysis_job_started',

@@ -6,29 +6,30 @@ mutating command. Keep credentials, fixture contents, SQL, and database dumps
 out of tickets. Use an isolated production-profile Compose project, dedicated
 MinIO prefix, and a new pipeline PostgreSQL/RabbitMQ state. Never use `down -v`.
 
-`AlertaDengueAnalise` generates SQL with `AlertTools::write_alerta` and applies
-the dengue and chikungunya files via `psql -f` inside
-`pipeline.refresh-alertas-job --load true`; Zika SQL may be generated but the
-pinned task does **not** apply it. Upserts can cover the default 100 week
-scientific window. A selected UF/week does not bound those writes. The analysis
-image therefore installs a `psql` wrapper in `/usr/local/bin` that checks the
-generated statements and live target **before** forwarding to the pinned
-Conda environment's PostgreSQL client.
+The pinned `AlertaDengueAnalise` revision is
+`27a03f26a9bf366597ef135e7da8d2f620ea9a8e`. Its task path is
+`refresh-alertas-job` → `refresh-alertas` → `Rscript main/main_BR.R` → two
+shell `psql -f` applications for dengue and chikungunya. Zika SQL may be
+generated but the task does **not** apply it. The image build patches those
+two exact upstream call sites to `/usr/local/bin/psql` and fails if the pinned
+task no longer has exactly two expected call sites. The wrapper validates the
+file, SQL, fixed connection arguments, live database identity, restore marker,
+and effective writer permissions before forwarding to the real Conda client.
+The absolute call sites make PATH order and shell PATH overrides irrelevant to
+the intended task path. The 100-week processing window remains unchanged; a
+selected UF/week does not bound those historical upserts.
 Only the fixed, restored `analysis-e2e-db/analysis_e2e` clone can pass. That
 database is isolated in its own Compose volume, has no published port, and
 must use a restricted `analysis_e2e_writer` role. It is never the ordinary
 staging scientific database. The full historical window remains available to
 the real scientific code; no artificial one-week policy is imposed.
 
-**Acceptance blocker:** the pinned image retains the real `psql` binary at
-`/opt/conda/envs/alertadengueanalise/bin/psql`. The task's normal PATH call
-uses the review wrapper, but direct invocation of that binary or another
-PostgreSQL client can bypass the wrapper. The wrapper strips libpq connection
-override variables and accepts only literal values in reviewed upserts, but
-these measures do not establish a mandatory SQL boundary. The restricted
-writer and isolated clone limit the damage. Do not claim pre-application review
-is unbypassable or accept the scientific load until a mandatory boundary is
-implemented and verified against the pinned image.
+The real PostgreSQL client remains at
+`/opt/conda/envs/alertadengueanalise/bin/psql`; the trusted task now names the
+review wrapper directly. This controls the pinned execution path, not arbitrary
+code execution inside a compromised image. Database isolation and the writer's
+effective privileges remain independent safeguards. Do not run the rehearsal
+if the image revision or task patch checks differ from the values below.
 
 ## 1. Pin checkout
 
@@ -71,12 +72,32 @@ before proceeding. Do not start, stop, or clean up a watcher in this rehearsal.
 Build the core and analysis worker from this commit using the issue #9 image
 procedure, publish them to a staging-accessible OCI registry, and record their
 pullable `repository@sha256:<manifest digest>` references. Verify each digest
-pulls to the reviewed image ID. Check the analysis image's pinned
-`AlertaDengueAnalise` revision in the CI workflow; check
+pulls to the reviewed image ID. Build the base from the exact pinned upstream
+checkout; the worker image records that revision in its OCI label. Check it
+alongside the pinned revision in CI:
+
+```sh
+docker image inspect "$ANALYSIS_REF" \
+  --format '{{ index .Config.Labels "org.infodengue.alertadengueanalise.revision" }}'
+```
+
+Require output `27a03f26a9bf366597ef135e7da8d2f620ea9a8e`. Also check
 `R --version`, `python --version`, `makim deps.check`, and
-`makim pipeline.refresh-alertas-job --help` in that image. Require
-`command -v psql` to resolve to `/usr/local/bin/psql` and
-`test -x /opt/conda/envs/alertadengueanalise/bin/psql` before continuing.
+`makim pipeline.refresh-alertas-job --help` in that image. Require the
+following checks before continuing:
+
+```sh
+docker run --rm --entrypoint /bin/sh "$ANALYSIS_REF" -ec '
+  test "$(command -v psql)" = /usr/local/bin/psql
+  test -x /opt/conda/envs/alertadengueanalise/bin/psql
+  test "$(grep -c "/usr/local/bin/psql " /opt/alertadengueanalise/.makim.yaml)" -eq 2
+  grep -n "/usr/local/bin/psql " /opt/alertadengueanalise/.makim.yaml
+'
+```
+
+The image build fails if the upstream task layout changes instead of silently
+shipping an unreviewed command path. Confirm the running worker's image digest
+matches `PIPELINE_ANALYSIS_IMAGE` and `INFODENGUE_PIPELINE_ANALYSIS_IMAGE`.
 Never use a mutable
 tag or Docker image configuration ID as a pullable digest.
 
@@ -189,7 +210,26 @@ The DBA adds only the read grants the scientific revision needs on other
 schemas, verifies the writer inherits no broader grants, and tests effective
 privileges. The writer must read the historical tables and
 `rehearsal.restore_evidence` and write only those historical tables within
-the clone.
+the clone. Confirm effective privileges as the writer, not just the role's
+grant statements:
+
+```sql
+SELECT current_database(), current_user, rolsuper, rolcreatedb,
+       rolcreaterole, rolreplication, rolbypassrls
+FROM pg_roles WHERE rolname = current_user;
+SELECT has_database_privilege(current_user, current_database(), 'CREATE');
+SELECT nspname, has_schema_privilege(current_user, oid, 'CREATE')
+FROM pg_namespace;
+SELECT schemaname, tablename,
+       has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT') AS can_insert,
+       has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE') AS can_update,
+       has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE') AS can_delete,
+       has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'TRUNCATE') AS can_truncate
+FROM pg_tables;
+```
+
+Stop if the role owns any object, inherits another role, can create objects,
+or can modify tables beyond the three approved historical tables.
 
 ## 9. Back up and prove restoration
 
@@ -342,6 +382,13 @@ initial private files still set to false, run:
 uv run makim prod.validate
 ```
 
+Before enabling writes, safely exercise rejection with an intentionally invalid
+SQL file in a disposable output directory. Invoke the review wrapper with the
+fixed clone arguments and confirm nonzero refusal before it starts the real
+client; do not put credentials in argv or print the environment. Also review a
+valid generated SQL file without applying it. Repository tests cover these
+paths without a live scientific write.
+
 Record the read-only result. Only after every earlier gate passes, stop the
 rehearsal workers and Beat (keep their isolated volumes and the clone), change
 `INFODENGUE_PIPELINE_ANALYSIS_LOAD=true` in both private worker files, and
@@ -384,10 +431,12 @@ uv run makim prod.analysis-e2e \
 
 The wrapper mounts the fixture and evidence read-only into a one-shot runner.
 It checks the fixed clone identity, linked backup bytes, live restore marker,
-and upstream SHA freshness before upload. The scientific image then reviews
-each generated dengue/chik SQL file **before** its `psql` application. It
-rejects other SQL shapes, paths and destinations. The database role and
-isolated clone provide an independent boundary if SQL review fails. The
+and upstream SHA freshness before upload. The scientific image routes each
+generated dengue/chik SQL file through the absolute review wrapper **before**
+application. Unexpected SQL, target, effective role, connection overrides,
+missing restore evidence, or excessive writer permissions fail closed. The
+independent database role and isolated clone constrain effects if a future
+upstream path bypasses review. The
 command uses the existing MinIO ingress and workflow validator.
 Do not retry this command after a failure without an investigation and a new
 fixture. Never manually retry the analysis task during acceptance.

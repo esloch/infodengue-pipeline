@@ -1,4 +1,5 @@
 ARG ALERTA_ANALYSIS_BASE_IMAGE
+ARG ALERTA_ANALYSIS_REVISION=27a03f26a9bf366597ef135e7da8d2f620ea9a8e
 
 FROM ghcr.io/astral-sh/uv:0.11.14 AS uv
 
@@ -17,6 +18,11 @@ RUN uv build --wheel --out-dir /dist \
 
 FROM ${ALERTA_ANALYSIS_BASE_IMAGE}
 
+ARG ALERTA_ANALYSIS_REVISION
+RUN test "${ALERTA_ANALYSIS_REVISION}" = \
+      "27a03f26a9bf366597ef135e7da8d2f620ea9a8e"
+LABEL org.infodengue.alertadengueanalise.revision="${ALERTA_ANALYSIS_REVISION}"
+
 COPY --from=wheel-builder /dist/ /tmp/pipeline-dist/
 
 RUN python -m pip install --no-cache-dir \
@@ -29,8 +35,11 @@ RUN python -m pip install --no-cache-dir \
 # The pinned scientific Makim task invokes `psql -f` by name. The earlier PATH
 # entry reviews the generated SQL before forwarding to the real client.
 COPY scripts/reviewed_psql.py /usr/local/bin/psql
+COPY scripts/patch_analysis_sql_callsite.py /usr/local/bin/patch-analysis-sql-callsite
 RUN test -x /opt/conda/envs/alertadengueanalise/bin/psql \
-    && chmod 0755 /usr/local/bin/psql
+    && chmod 0755 /usr/local/bin/psql \
+    && python /usr/local/bin/patch-analysis-sql-callsite \
+    && test "$(grep -c '/usr/local/bin/psql \\' /opt/alertadengueanalise/.makim.yaml)" -eq 2
 ENV PATH="/usr/local/bin:${PATH}"
 
 WORKDIR /opt/alertadengueanalise
