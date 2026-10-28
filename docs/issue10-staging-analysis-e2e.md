@@ -120,10 +120,16 @@ Confirm the network reaches only approved staging services.
 
 Use the `infodengue-pipeline-prod` project in
 `containers/compose-prod.yaml`, with its own named PostgreSQL and RabbitMQ
-volumes and fresh passwords. The separate `analysis-e2e-db` profile has its
-own scientific clone volume and **no host port**. Verify ports 5436 and 5675
-are free. Never point the pipeline URL at the ordinary staging pipeline
-database or broker.
+volumes and fresh passwords. The pipeline's internal `postgres` service stays
+on PostgreSQL 16. The separate `analysis-e2e-db` service uses PostgreSQL 18 to
+match the staging scientific source at 18.6, has its own v18 named volume
+mounted at `/var/lib/postgresql`, and has **no host port**. The PostgreSQL 18
+image stores data under its versioned `PGDATA` directory inside that mount.
+Compose creates `pipeline_prod_analysis_e2e_pgdata_v18` if absent; verify it is
+an empty, dedicated clone volume before first use. Do not reuse a volume from a
+PostgreSQL 16 clone or remove old volumes. Verify ports
+5436 and 5675 are free. Never point the pipeline URL at the ordinary staging
+pipeline database or broker.
 
 ## 6. Verify dedicated MinIO scope
 
@@ -250,6 +256,15 @@ docker compose --env-file .env.prod -f containers/compose-prod.yaml \
   up -d --no-build --pull never analysis-e2e-db
 docker compose --env-file .env.prod -f containers/compose-prod.yaml \
   ps analysis-e2e-db
+docker compose --env-file .env.prod -f containers/compose-prod.yaml \
+  exec -T analysis-e2e-db sh -ec '
+    test "$PGDATA" = /var/lib/postgresql/18/docker
+    test "$(postgres --version | awk "{print \$3}" | cut -d. -f1)" = 18
+    test -s "$PGDATA/PG_VERSION"
+    test "$(cat "$PGDATA/PG_VERSION")" = 18
+    pg_isready -U analysis_e2e_admin -d analysis_e2e
+    pg_restore --version
+  '
 CLONE_CONTAINER=$(docker compose --env-file .env.prod \
   -f containers/compose-prod.yaml ps -q analysis-e2e-db)
 docker cp /secure/staging/analysis-before.dump \
@@ -263,6 +278,16 @@ docker compose --env-file .env.prod -f containers/compose-prod.yaml \
       /tmp/analysis-before.dump
   '
 ```
+
+The source scientific database is PostgreSQL 18.6; use a PostgreSQL 18
+`pg_restore` client in the clone container and confirm the clone server reports
+major version 18 before restoration. Initialization uses
+`POSTGRES_DB=analysis_e2e` and `POSTGRES_USER=analysis_e2e_admin`; Compose's
+health check must report healthy before proceeding. The restore target is the
+isolated clone only. `--no-owner --no-acl` leaves restored objects outside the
+writer's ownership, after which the DBA applies only the restricted writer
+grants from phase 8. The fixed database name, restore evidence marker,
+effective-privilege checks, and writer role requirements are unchanged.
 
 Require `pg_restore` exit zero. If an extension or schema cannot be restored,
 stop; never mark it successful. Query the clone's three historical tables and

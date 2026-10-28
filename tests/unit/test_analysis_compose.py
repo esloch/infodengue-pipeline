@@ -236,8 +236,18 @@ def test_production_service_set_and_privilege_boundary() -> None:
         )
     clone = _service_section('compose-prod.yaml', 'analysis-e2e-db')
     assert 'profiles: ["analysis-e2e-db"]' in clone
-    assert 'pipeline_prod_analysis_e2e_pgdata' in clone
+    assert 'image: postgres:18-alpine' in clone
+    assert (
+        'pipeline_prod_analysis_e2e_pgdata_v18:/var/lib/postgresql' in clone
+    )
+    assert 'POSTGRES_DB: analysis_e2e' in clone
+    assert 'POSTGRES_USER: analysis_e2e_admin' in clone
+    assert 'pg_isready -U analysis_e2e_admin -d analysis_e2e' in clone
     assert '    ports:' not in clone
+    core_postgres = _service_section('compose-prod.yaml', 'postgres')
+    assert 'image: postgres:16-alpine' in core_postgres
+    assert 'pipeline_prod_pgdata:/var/lib/postgresql/data' in core_postgres
+    assert 'pipeline_prod_analysis_e2e_pgdata_v18:\n' in text
 
 
 def test_production_workers_are_gated_by_successful_migration() -> None:
