@@ -1,5 +1,7 @@
 """Pre-application SQL review of the pinned scientific writer contract."""
 
+import os
+
 from pathlib import Path
 from unittest.mock import patch
 
@@ -49,8 +51,12 @@ def test_historical_upserts_review_before_application(tmp_path: Path) -> None:
     sql_dir = tmp_path / 'sql'
     sql_dir.mkdir()
     path = sql_dir / 'output_dengue.sql'
-    path.write_text(_sql() + _sql().replace('202412', '202411'))
-    assert review_sql(path, tmp_path) == 2
+    path.write_text(
+        _sql()
+        + _sql().replace('202412', '202411')
+        + _sql().replace('3106200', '3.1062e6')
+    )
+    assert review_sql(path, tmp_path) == 3
 
 
 @pytest.mark.parametrize(
@@ -62,6 +68,7 @@ def test_historical_upserts_review_before_application(tmp_path: Path) -> None:
         _sql().replace('"SE"=excluded."SE"', '"SE"=0'),
         _sql() + 'DELETE FROM "Municipio"."Historico_alerta";',
         _sql().replace("'Belo; Horizonte'", "'unterminated"),
+        _sql().replace("'Belo; Horizonte'", 'pg_sleep(1)'),
     ],
 )
 def test_rejects_unexpected_sql(tmp_path: Path, sql: str) -> None:
@@ -116,6 +123,8 @@ def test_review_precedes_real_psql(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setenv('ALERTA_OUT_DIR', str(tmp_path))
     monkeypatch.setenv('PGPASSWORD', 'test-only')
+    monkeypatch.setenv('PGHOSTADDR', '192.0.2.10')
+    monkeypatch.setenv('PGSERVICE', 'unreviewed')
     with (
         patch(
             'infodengue_pipeline.production.sql_review.psycopg.connect'
@@ -133,10 +142,13 @@ def test_review_precedes_real_psql(tmp_path: Path, monkeypatch) -> None:
             (False,),
             (True,),
             (True,),
+            (True,),
             (False,),
         ]
         apply.return_value.returncode = 0
         assert review_and_apply(_argv(path)) == 0
+        assert 'PGHOSTADDR' not in os.environ
+        assert 'PGSERVICE' not in os.environ
         apply.assert_called_once()
         assert apply.call_args.args[0][0] == (
             '/opt/conda/envs/alertadengueanalise/bin/psql'
@@ -212,7 +224,17 @@ def test_cli_reports_refusal(monkeypatch, capsys) -> None:
                 (True,),
                 (False,),
             ],
-            'other Municipio tables',
+            'other tables',
+        ),
+        (
+            [
+                (False, False, False, False, False),
+                (False,),
+                (True,),
+                (True,),
+                (False,),
+            ],
+            'create DB objects',
         ),
         (
             [
@@ -221,8 +243,9 @@ def test_cli_reports_refusal(monkeypatch, capsys) -> None:
                 (True,),
                 (True,),
                 (True,),
+                (True,),
             ],
-            'owns target tables',
+            'owns DB objects',
         ),
     ],
 )

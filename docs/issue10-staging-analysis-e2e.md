@@ -20,6 +20,16 @@ must use a restricted `analysis_e2e_writer` role. It is never the ordinary
 staging scientific database. The full historical window remains available to
 the real scientific code; no artificial one-week policy is imposed.
 
+**Acceptance blocker:** the pinned image retains the real `psql` binary at
+`/opt/conda/envs/alertadengueanalise/bin/psql`. The task's normal PATH call
+uses the review wrapper, but direct invocation of that binary or another
+PostgreSQL client can bypass the wrapper. The wrapper strips libpq connection
+override variables and accepts only literal values in reviewed upserts, but
+these measures do not establish a mandatory SQL boundary. The restricted
+writer and isolated clone limit the damage. Do not claim pre-application review
+is unbypassable or accept the scientific load until a mandatory boundary is
+implemented and verified against the pinned image.
+
 ## 1. Pin checkout
 
 ```sh
@@ -36,12 +46,25 @@ tree. Record the SHA in the private evidence log.
 ```sh
 docker ps --format '{{.Names}} {{.Status}}'
 docker volume ls --filter name=infodengue-pipeline-prod
-systemctl --user status infodengue-sinan-watcher.service
+ps -eo pid,user,lstart,args | grep '[i]ngestion_watcher.py'
+pgrep -af '[i]ngestion_watcher.py'
+for pid in $(pgrep -f '[i]ngestion_watcher.py'); do
+  printf 'PID=%s cwd=' "$pid"
+  readlink "/proc/$pid/cwd"
+  tr '\0' ' ' <"/proc/$pid/cmdline"
+  printf '\n'
+done
+test -d /opt/data/staging/sinan/incoming
 ```
 
 Record ordinary staging service health. Confirm the rehearsal project, volumes,
-watcher, and incoming directory ownership. Stop if any rehearsal state has an
-unknown owner. Do not start a second watcher.
+watcher, and incoming directory ownership. Inspect each watcher's `--path`,
+working directory and command line in the read-only listing.
+The inactive `infodengue-sinan-watcher.service` does not establish that no
+watcher is running. The October 22 host process watches
+`/opt/data/staging/sinan/incoming` with `--requeue --include-existing`; five
+June processes used the literal incorrect `$` path. Confirm current facts
+before proceeding. Do not start, stop, or clean up a watcher in this rehearsal.
 
 ## 3. Verify both image digests
 
@@ -61,9 +84,16 @@ tag or Docker image configuration ID as a pullable digest.
 
 ```sh
 docker network inspect infodengue-staging_infodengue --format '{{.Name}}'
+docker inspect infodengue-pipeline-staging-minio \
+  --format '{{json .NetworkSettings.Networks}}'
+docker inspect infodengue-staging-postgres-1 \
+  --format '{{json .NetworkSettings.Networks}}'
 ```
 
-Confirm this network reaches only approved staging services.
+Require `pipeline-minio` on the pipeline MinIO container and `postgres` on
+the staging AlertaDengue PostgreSQL container. The separate
+`infodengue-staging-minio-1` is not attached to this integration network.
+Confirm the network reaches only approved staging services.
 
 ## 5. Provision isolated pipeline state
 
@@ -79,9 +109,11 @@ database or broker.
 Provision a new staging-only bucket or empty prefix outside every existing
 consumer's namespace. Verify emptiness with the staging MinIO administrator.
 For this entry point, use the `infodengue-staging_infodengue` integration
-network, `minio:9000`, a dedicated bucket beginning `issue10-`, and a prefix
+network, `pipeline-minio:9000`, a dedicated bucket beginning `issue10-`, and a prefix
 beginning `issue10/`; the command refuses any other routing. Confirm the
-staging network actually owns those DNS aliases before enabling workers.
+staging network actually owns that DNS alias before enabling workers. This
+endpoint names the pipeline MinIO instance; do not change the ordinary staging
+MinIO instance. Use a fresh `issue10/` subprefix with no other active consumer.
 The worker role needs bucket existence, list and object read in that scope;
 the separate `.env.prod.e2e` writer needs `PutObject` and `StatObject` for that
 scope. Neither needs deletes. Check host watchers and non-Docker consumers as
@@ -108,6 +140,11 @@ read-only prerequisite. The analysis DB URL in `.env.prod.analysis` and
 password. The core file needs the staging source DB read role and the same
 readiness policy as the intended test. Avoid BR because default BR readiness
 requires both dengue and chikungunya ingestions. Keep all files untracked.
+Use `pipeline_readonly@postgres:5432/dengue` for the source URL and
+`pipeline_analysis_readonly@postgres:5432/dengue` for the initial scientific
+read-only URL. The source and writer credentials must remain separate. Verify
+the effective database and role through a read-only connection; URL text alone
+is insufficient.
 
 ## 8. Verify analysis DB identity and grants
 
@@ -209,7 +246,8 @@ GRANT SELECT ON rehearsal.restore_evidence TO analysis_e2e_writer;
 ```
 
 Record a private JSON proof file with `backup_sha256`,
-`source_environment` (`staging`), actual `source_host`, `source_database`,
+`source_environment` (`staging`), actual `source_host` (`postgres`),
+`source_database` (`dengue`),
 `source_role`, `restored_database` (`analysis_e2e`) and
 `restore_test_succeeded` (`true`). The runner checks the dump bytes and proof;
 it also queries the independent marker in the **restored clone**. JSON alone
@@ -223,6 +261,13 @@ is not that role and owns no restored tables.
 Use a small, authorized synthetic or sanitized **dengue UF** SINAN CSV/DBF
 accepted by the real AlertaDengue watcher. No suitable fixture is committed
 here: fixture preparation and scientific validity are an operator prerequisite.
+The existing incoming directory already contains staging CSV/DBF files. Never
+move, overwrite, delete, or reingest them. File absence from `incoming` is no
+proof of freshness: the watcher can process a file and the source database
+keeps the run SHA. The runner checks `ingestion.run` by SHA before upload and
+uses an unpredictable object key in a dedicated bucket/prefix. The current
+watcher uses `--requeue --include-existing`, so verify its effective consumer
+scope and existing work before executing.
 Record provenance, UF, epidemiological year/week, disease, size, SHA-256, and
 the intended new bucket/prefix. The runner probes `ingestion.run` by SHA and
 creates a nonce-bearing key; an existing SHA is refused. Check no other
@@ -277,10 +322,16 @@ load can run in this initial `load=false` configuration.
 
 ```sh
 docker compose --env-file .env.prod -f containers/compose-prod.yaml ps --all
+docker compose --env-file .env.prod -f containers/compose-prod.yaml \
+  exec -T worker-ingestion python -c \
+  'from infodengue_pipeline.config import get_settings; from infodengue_pipeline.production.analysis_e2e import verify_source_staging; verify_source_staging(get_settings()); print("source database, role and read-only grants: ok")'
 ```
 
-Require `migrate` exit 0 and all five workers healthy. Verify the existing
-single watcher is active and points to the staging incoming bind.
+Require `migrate` exit 0 and all five workers healthy. Verify the actual
+host-level watcher processes and paths again. Require one effective watcher
+for `/opt/data/staging/sinan/incoming` and establish that other consumers
+cannot process the dedicated object or its materialized file. The watcher's
+per-directory lock does not coordinate different watch paths.
 
 ## 15. Run the read-only prerequisite
 
@@ -399,7 +450,11 @@ Keep volumes, output files, failed-job evidence, backup and logs for review.
 
 ```sh
 docker ps --format '{{.Names}} {{.Status}}'
-systemctl --user is-active infodengue-sinan-watcher.service
+ps -eo pid,user,lstart,args | grep '[i]ngestion_watcher.py'
+docker inspect infodengue-pipeline-staging-minio \
+  --format '{{json .NetworkSettings.Networks}}'
+docker inspect infodengue-staging-postgres-1 \
+  --format '{{json .NetworkSettings.Networks}}'
 ```
 
 Require ordinary staging services healthy and unchanged. The issue is accepted

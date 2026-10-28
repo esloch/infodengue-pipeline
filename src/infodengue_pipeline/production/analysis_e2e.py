@@ -122,7 +122,7 @@ def require_profile(settings: Settings) -> None:
     if (
         os.environ.get('PROD_INTEGRATION_NETWORK')
         != 'infodengue-staging_infodengue'
-        or settings.minio_endpoint != 'minio:9000'
+        or settings.minio_endpoint != 'pipeline-minio:9000'
         or settings.minio_secure
         or not settings.minio_bucket.startswith('issue10-')
         or not settings.minio_prefix.startswith('issue10/')
@@ -139,30 +139,53 @@ def verify_source_staging(settings: Settings) -> None:
         raise ValueError('production analysis E2E failed: source DB absent')
     url = secret.get_secret_value()
     parsed = make_url(url)
-    if parsed.host != 'postgres' or parsed.database != 'alerta':
+    if (
+        (parsed.host, parsed.database, parsed.username)
+        != ('postgres', 'dengue', 'pipeline_readonly')
+        or parsed.port not in (None, 5432)
+        or parsed.query
+    ):
         raise ValueError(
             'production analysis E2E failed: source database is not staging'
         )
     engine = create_engine(url, hide_parameters=True)
     try:
         with engine.connect() as connection:
+            connection.execute(text('SET TRANSACTION READ ONLY'))
             actual = connection.execute(
-                text('SELECT current_database(), current_user')
+                text('SELECT current_database(), current_user, session_user')
             ).one()
-            if tuple(actual) != ('alerta', parsed.username):
+            if tuple(actual) != (
+                'dengue',
+                'pipeline_readonly',
+                'pipeline_readonly',
+            ):
                 raise ValueError(
                     'production analysis E2E failed: source identity differs'
                 )
-            writable = connection.execute(
+            unsafe_role = connection.execute(
                 text(
-                    'SELECT has_table_privilege(current_user, '
-                    "'ingestion.run', "
-                    "'INSERT') OR has_table_privilege(current_user, "
-                    "'ingestion.run', 'UPDATE') OR has_table_privilege("
-                    "current_user, 'ingestion.run', 'DELETE')"
+                    'SELECT rolsuper OR rolcreatedb OR rolcreaterole OR '
+                    'rolreplication OR rolbypassrls FROM pg_roles '
+                    'WHERE rolname = current_user'
                 )
             ).scalar_one()
-            if writable:
+            writable = connection.execute(
+                text(
+                    'SELECT has_database_privilege(current_user, '
+                    "current_database(), 'CREATE') OR EXISTS ("
+                    'SELECT 1 FROM pg_namespace n WHERE '
+                    "has_schema_privilege(current_user, n.oid, 'CREATE')) "
+                    'OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n '
+                    'ON n.oid = c.relnamespace WHERE c.relkind IN '
+                    "('r', 'p', 'v', 'm') AND ("
+                    "has_table_privilege(current_user, c.oid, 'INSERT') OR "
+                    "has_table_privilege(current_user, c.oid, 'UPDATE') OR "
+                    "has_table_privilege(current_user, c.oid, 'DELETE') OR "
+                    "has_table_privilege(current_user, c.oid, 'TRUNCATE')))"
+                )
+            ).scalar_one()
+            if unsafe_role or writable:
                 raise ValueError(
                     'production analysis E2E failed: source role is writable'
                 )
@@ -183,14 +206,21 @@ def verify_target(settings: Settings, expected: Target) -> None:
         raise ValueError('production analysis E2E failed: analysis DB absent')
     url = secret.get_secret_value()
     parsed = make_url(url)
-    if (expected.host, expected.database, expected.role) != (
-        ANALYSIS_E2E_HOST,
-        ANALYSIS_E2E_DATABASE,
-        ANALYSIS_E2E_ROLE,
-    ) or (parsed.host, parsed.database, parsed.username) != (
-        expected.host,
-        expected.database,
-        expected.role,
+    if (
+        (expected.host, expected.database, expected.role)
+        != (
+            ANALYSIS_E2E_HOST,
+            ANALYSIS_E2E_DATABASE,
+            ANALYSIS_E2E_ROLE,
+        )
+        or (parsed.host, parsed.database, parsed.username)
+        != (
+            expected.host,
+            expected.database,
+            expected.role,
+        )
+        or parsed.port not in (None, 5432)
+        or parsed.query
     ):
         raise ValueError(_TARGET_FAILURE)
     engine = create_engine(url, hide_parameters=True)
@@ -259,10 +289,8 @@ def verify_backup(
         verified = (
             proof['backup_sha256'] == digest
             and proof['source_environment'] == 'staging'
-            and bool(proof['source_host'])
-            and proof['source_host'] != expected.host
-            and bool(proof['source_database'])
-            and proof['source_database'] != expected.database
+            and proof['source_host'] == 'postgres'
+            and proof['source_database'] == 'dengue'
             and bool(proof['source_role'])
             and proof['restore_test_succeeded'] is True
             and proof['restored_database'] == expected.database

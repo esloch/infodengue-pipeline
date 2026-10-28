@@ -33,6 +33,12 @@ ASSIGNMENT = re.compile(
     r'\A\s*("?[A-Za-z_][A-Za-z_0-9]*"?)\s*=\s*'
     r'excluded\.\1\s*\Z',
 )
+LITERAL_VALUES = re.compile(
+    r"\A\s*(?:NULL|TRUE|FALSE|[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?|'(?:[^']|'')*')"
+    r"(?:\s*,\s*(?:NULL|TRUE|FALSE|[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?|'(?:[^']|'')*'))*"
+    r'\s*\Z',
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class SqlReviewError(ValueError):
@@ -94,6 +100,8 @@ def review_sql(path: Path, output_root: Path) -> int:
             raise SqlReviewError('missing bounded historical key columns')
         if re.match(r'\A\s*\d{6}\s*,', match['values']) is None:
             raise SqlReviewError('invalid epidemiological week value')
+        if LITERAL_VALUES.fullmatch(match['values']) is None:
+            raise SqlReviewError('unexpected SQL value expression')
         updates = match['updates'].split(',')
         if not updates or not all(
             ASSIGNMENT.fullmatch(item) for item in updates
@@ -137,6 +145,11 @@ def review_and_apply(argv: list[str]) -> int:
     password = os.environ.get('PGPASSWORD')
     if not root_value or not digest or not password or len(digest) != 64:
         raise SqlReviewError('backup or output evidence is missing')
+    # libpq accepts connection overrides from the environment even when psql
+    # receives explicit -h/-U/-d arguments (notably PGHOSTADDR and PGSERVICE).
+    for name in tuple(os.environ):
+        if name.startswith('PG') and name != 'PGPASSWORD':
+            os.environ.pop(name)
     count = review_sql(path, Path(root_value))
     try:
         with psycopg.connect(
@@ -194,9 +207,10 @@ def review_and_apply(argv: list[str]) -> int:
                 cursor.execute(
                     'SELECT NOT EXISTS (SELECT 1 FROM pg_class c '
                     'JOIN pg_namespace n ON n.oid = c.relnamespace '
-                    "WHERE n.nspname = 'Municipio' AND c.relkind IN "
-                    "('r', 'p') AND c.relname NOT IN ('Historico_alerta', "
-                    "'Historico_alerta_chik', 'Historico_alerta_zika') "
+                    "WHERE c.relkind IN ('r', 'p', 'v', 'm') AND NOT ("
+                    "n.nspname = 'Municipio' AND c.relname IN "
+                    "('Historico_alerta', 'Historico_alerta_chik', "
+                    "'Historico_alerta_zika')) "
                     "AND (has_table_privilege(current_user, c.oid, 'INSERT') "
                     "OR has_table_privilege(current_user, c.oid, 'UPDATE') "
                     "OR has_table_privilege(current_user, c.oid, 'DELETE') "
@@ -204,19 +218,28 @@ def review_and_apply(argv: list[str]) -> int:
                 )
                 if cursor.fetchone() != (True,):
                     raise SqlReviewError(
-                        'analysis role can modify other Municipio tables'
+                        'analysis role can modify other tables'
                     )
                 cursor.execute(
+                    'SELECT NOT has_database_privilege(current_user, '
+                    "current_database(), 'CREATE') AND NOT EXISTS ("
+                    'SELECT 1 FROM pg_namespace n WHERE '
+                    "has_schema_privilege(current_user, n.oid, 'CREATE'))"
+                )
+                if cursor.fetchone() != (True,):
+                    raise SqlReviewError('analysis role can create DB objects')
+                cursor.execute(
                     'SELECT EXISTS (SELECT 1 FROM pg_class c '
-                    'JOIN pg_namespace n ON n.oid = c.relnamespace '
-                    "WHERE n.nspname = 'Municipio' "
-                    "AND c.relname IN ('Historico_alerta', "
-                    "'Historico_alerta_chik', 'Historico_alerta_zika') "
-                    'AND c.relowner = (SELECT oid FROM pg_roles '
-                    'WHERE rolname = current_user))'
+                    'WHERE c.relowner = (SELECT oid FROM pg_roles '
+                    'WHERE rolname = current_user)) OR EXISTS '
+                    '(SELECT 1 FROM pg_namespace n WHERE n.nspowner = '
+                    '(SELECT oid FROM pg_roles WHERE rolname = current_user)) '
+                    'OR EXISTS (SELECT 1 FROM pg_database d WHERE '
+                    'd.datname = current_database() AND d.datdba = '
+                    '(SELECT oid FROM pg_roles WHERE rolname = current_user))'
                 )
                 if cursor.fetchone() != (False,):
-                    raise SqlReviewError('analysis role owns target tables')
+                    raise SqlReviewError('analysis role owns DB objects')
     except SqlReviewError:
         raise
     except Exception as exc:

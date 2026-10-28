@@ -1,6 +1,7 @@
 """Finite in-container execution of the scientific job contract."""
 
 import os
+import shutil
 import signal
 import subprocess  # nosec B404
 import time
@@ -248,6 +249,14 @@ class InContainerAnalysisRunner:
             raise ValueError('analysis database URL is not configured')
         database_url = settings.analysis_database_url.get_secret_value()
         require_staging_load_target(settings, request, database_url)
+        if settings.environment == 'prod' and request.load:
+            if (
+                shutil.which('psql', path=env.get('PATH'))
+                != '/usr/local/bin/psql'
+            ):
+                raise ValueError(
+                    'production analysis SQL review wrapper missing'
+                )
         database = make_url(database_url)
         if not database.host or not database.database or not database.username:
             raise ValueError('analysis database URL is incomplete')

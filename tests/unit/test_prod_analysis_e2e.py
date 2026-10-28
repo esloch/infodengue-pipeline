@@ -39,12 +39,12 @@ def settings(**overrides: object) -> Settings:
         'analysis_load': True,
         'minio_prefix': 'issue10/',
         'minio_bucket': 'issue10-fixtures',
-        'minio_endpoint': 'minio:9000',
+        'minio_endpoint': 'pipeline-minio:9000',
         'analysis_database_url': SecretStr(
             'postgresql+psycopg://analysis_e2e_writer:secret@analysis-e2e-db:5432/analysis_e2e'
         ),
         'alerta_source_database_url': SecretStr(
-            'postgresql+psycopg://reader:secret@postgres:5432/alerta'
+            'postgresql+psycopg://pipeline_readonly:secret@postgres:5432/dengue'
         ),
     }
     values.update(overrides)
@@ -59,6 +59,9 @@ def test_profile_rejections() -> None:
         require_profile(settings(analysis_load=False))
     with pytest.raises(ValueError, match='external staging scope'):
         require_profile(settings(minio_endpoint='production:9000'))
+    with pytest.raises(ValueError, match='external staging scope'):
+        require_profile(settings(minio_endpoint='minio:9000'))
+    require_profile(settings())
 
 
 def test_source_identity_and_read_role() -> None:
@@ -67,7 +70,7 @@ def test_source_identity_and_read_role() -> None:
         verify_source_staging(
             settings(
                 alerta_source_database_url=SecretStr(
-                    'postgresql+psycopg://reader:secret@production/alerta'
+                    'postgresql+psycopg://pipeline_readonly:secret@production/dengue'
                 )
             )
         )
@@ -77,12 +80,32 @@ def test_source_identity_and_read_role() -> None:
         connection = (
             create.return_value.connect.return_value.__enter__.return_value
         )
-        connection.execute.return_value.one.return_value = ('alerta', 'reader')
+        connection.execute.return_value.one.return_value = (
+            'dengue',
+            'pipeline_readonly',
+            'pipeline_readonly',
+        )
         connection.execute.return_value.scalar_one.return_value = False
         verify_source_staging(settings())
         connection.execute.return_value.scalar_one.return_value = True
         with pytest.raises(ValueError, match='source role is writable'):
             verify_source_staging(settings())
+        connection.execute.return_value.one.return_value = (
+            'dengue',
+            'writer',
+            'pipeline_readonly',
+        )
+        with pytest.raises(ValueError, match='source identity differs'):
+            verify_source_staging(settings())
+    for url in (
+        'postgresql+psycopg://pipeline_readonly:secret@postgres:5432/alerta',
+        'postgresql+psycopg://writer:secret@postgres:5432/dengue',
+        'postgresql+psycopg://pipeline_readonly:secret@postgres:5432/dengue?hostaddr=10.0.0.1',
+    ):
+        with pytest.raises(ValueError, match='source database is not staging'):
+            verify_source_staging(
+                settings(alerta_source_database_url=SecretStr(url))
+            )
 
 
 def test_target_rejection_without_connection() -> None:
@@ -90,6 +113,15 @@ def test_target_rejection_without_connection() -> None:
     with pytest.raises(ValueError, match='target is not staging'):
         verify_target(
             settings(), Target('wrong', 'analysis_e2e', 'analysis_e2e_writer')
+        )
+    with pytest.raises(ValueError, match='target is not staging'):
+        verify_target(
+            settings(
+                analysis_database_url=SecretStr(
+                    'postgresql+psycopg://analysis_e2e_writer:secret@analysis-e2e-db:5432/analysis_e2e?hostaddr=10.0.0.1'
+                )
+            ),
+            Target('analysis-e2e-db', 'analysis_e2e', 'analysis_e2e_writer'),
         )
 
 
@@ -106,8 +138,8 @@ def test_backup_requires_digest_and_restore_evidence(tmp_path: Path) -> None:
         json.dumps(
             {
                 'backup_sha256': digest,
-                'source_host': 'staging-source-db',
-                'source_database': 'alerta_staging',
+                'source_host': 'postgres',
+                'source_database': 'dengue',
                 'source_role': 'staging_backup',
                 'source_environment': 'staging',
                 'restore_test_succeeded': True,
@@ -118,6 +150,11 @@ def test_backup_requires_digest_and_restore_evidence(tmp_path: Path) -> None:
     verify_backup(backup, digest, proof, target)
     with pytest.raises(ValueError, match='backup not verified'):
         verify_backup(backup, '0' * 64, proof, target)
+    invalid = json.loads(proof.read_text())
+    invalid['source_database'] = 'alerta'
+    proof.write_text(json.dumps(invalid))
+    with pytest.raises(ValueError, match='backup not verified'):
+        verify_backup(backup, digest, proof, target)
 
 
 def test_missing_execution_gate_does_not_probe_or_upload(

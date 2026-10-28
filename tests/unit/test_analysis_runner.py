@@ -321,6 +321,32 @@ def test_analysis_runner_does_not_fall_back_to_source_database(
         InContainerAnalysisRunner(settings).run(request())
 
 
+def test_prod_load_requires_sql_review_wrapper(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A changed PATH fails before any scientific process can start."""
+    settings = Settings(
+        _env_file=None,
+        environment='prod',
+        analysis_database_url='postgresql://writer:secret@analysis-e2e-db/analysis_e2e',
+        analysis_output_root=tmp_path / 'outputs',
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.require_staging_load_target',
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.shutil.which',
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        'infodengue_pipeline.analysis.runner.run_scientific_process',
+        lambda *_args: pytest.fail('scientific process started'),
+    )
+    with pytest.raises(ValueError, match='SQL review wrapper missing'):
+        InContainerAnalysisRunner(settings).run(request(load=True))
+
+
 def test_analysis_runner_rejects_incomplete_target_database(
     monkeypatch, tmp_path: Path
 ) -> None:
