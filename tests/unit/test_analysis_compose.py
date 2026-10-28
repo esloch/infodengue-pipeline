@@ -199,7 +199,7 @@ def test_pipeline_urls_use_unique_network_aliases(example: str) -> None:
 
 
 def test_production_service_set_and_privilege_boundary() -> None:
-    """Production has a profile-gated finite E2E runner."""
+    """Production has only the finite migration and long-lived services."""
     text = Path('containers/compose-prod.yaml').read_text()
     services = text.split('services:\n', 1)[1].split('\nvolumes:\n', 1)[0]
     names = set(re.findall(r'^  ([a-z][a-z0-9-]*):$', services, re.M))
@@ -212,8 +212,6 @@ def test_production_service_set_and_privilege_boundary() -> None:
         'worker-orchestration',
         'worker-analysis',
         'worker-beat',
-        'analysis-e2e-runner',
-        'analysis-e2e-db',
     }
     assert names.isdisjoint({'validator', 'e2e-runner', 'minio', 'minio-init'})
     for forbidden in (
@@ -230,22 +228,10 @@ def test_production_service_set_and_privilege_boundary() -> None:
         assert forbidden not in text
     assert 'name: infodengue-pipeline-prod' in text
     assert '    build:' not in text
-    for name in names - {'postgres', 'rabbitmq', 'analysis-e2e-db'}:
+    for name in names - {'postgres', 'rabbitmq'}:
         assert 'INFODENGUE_PIPELINE_ENVIRONMENT: prod' in _service_section(
             'compose-prod.yaml', name
         )
-    clone = _service_section('compose-prod.yaml', 'analysis-e2e-db')
-    assert 'profiles: ["analysis-e2e-db"]' in clone
-    assert 'image: postgres:18-alpine' in clone
-    assert 'pipeline_prod_analysis_e2e_pgdata_v18:/var/lib/postgresql' in clone
-    assert 'POSTGRES_DB: analysis_e2e' in clone
-    assert 'POSTGRES_USER: analysis_e2e_admin' in clone
-    assert 'pg_isready -U analysis_e2e_admin -d analysis_e2e' in clone
-    assert '    ports:' not in clone
-    core_postgres = _service_section('compose-prod.yaml', 'postgres')
-    assert 'image: postgres:16-alpine' in core_postgres
-    assert 'pipeline_prod_pgdata:/var/lib/postgresql/data' in core_postgres
-    assert 'pipeline_prod_analysis_e2e_pgdata_v18:\n' in text
 
 
 def test_production_workers_are_gated_by_successful_migration() -> None:
@@ -340,8 +326,7 @@ def test_production_env_roles_and_immutable_image() -> None:
     assert 'INFODENGUE_PIPELINE_MINIO_SECRET_KEY=' not in analysis
     assert 'STAGING_E2E_MINIO_ACCESS_KEY' not in core
     assert 'STAGING_E2E_MINIO_SECRET_KEY' not in core
-    assert 'PIPELINE_E2E_ENV_FILE' not in core + analysis
-    assert 'PIPELINE_E2E_ENV_FILE' in compose
+    assert 'PIPELINE_E2E_ENV_FILE' not in core + analysis + compose
     assert 'INFODENGUE_PIPELINE_ANALYSIS_LOAD=false\n' in core
     assert 'INFODENGUE_PIPELINE_ANALYSIS_LOAD=false\n' in analysis
     values = dict(

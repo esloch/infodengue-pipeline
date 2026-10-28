@@ -48,11 +48,6 @@ socket.
 
 ## Staging-host rehearsal
 
-For the issue #10 `analysis_load=true` scientific write rehearsal, follow the
-[controlled staging analysis runbook](issue10-staging-analysis-e2e.md). Its
-backup, target identity, scoped grant, fixture and evidence gates are required
-before any mutating execution. The issue #9 sequence below remains read-only.
-
 For the issue #9 manual acceptance sequence, use the
 [staging-host runbook](issue9-staging-rehearsal.md). Its image-digest, consumer
 isolation, prerequisite, and teardown gates must be completed before running
@@ -264,6 +259,24 @@ Expected successful output includes named `...: ok` checks and ends with
 boundary; database and Compose diagnostics are suppressed to avoid printing
 credentials. The check does not prove that the source or analysis role lacks
 write grants; provision and audit those roles separately.
+
+## Read-only deployment validation
+
+On the staging host, point the private production-profile files at staging
+resources only, keep `INFODENGUE_PIPELINE_ANALYSIS_LOAD=false` in both files,
+and start the reviewed profile. Then run:
+
+```sh
+uv run makim prod.validate
+```
+
+The command inspects the rendered Compose configuration and running worker
+states, then runs finite probes inside the ingestion and analysis workers. It
+checks pipeline PostgreSQL and migration revision, RabbitMQ, MinIO, the
+AlertaDengue source connection, the analysis database, and worker filesystem
+access. It does not start services or apply migrations. Database probes issue
+only `SELECT`; the MinIO probe does not upload an object. The validator reports
+failed boundaries without printing connection diagnostics or credentials.
 
 ## Starting the production profile
 

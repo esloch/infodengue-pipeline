@@ -45,13 +45,6 @@ class Settings(BaseSettings):
     analysis_output_root: Path = Path('.local/analysis-output')
     analysis_cores: int = Field(default=1, ge=1, le=64)
     analysis_load: bool = False
-    analysis_staging_target_host: str | None = None
-    analysis_staging_target_database: str | None = None
-    analysis_staging_target_role: str | None = None
-    analysis_staging_backup_verified: bool = False
-    analysis_staging_backup_sha256: str | None = None
-    analysis_e2e_coverage: str | None = None
-    analysis_e2e_epiweek: str | None = None
     analysis_timeout_seconds: int = Field(default=21600, ge=1)
     analysis_load_lock_timeout_seconds: int = Field(default=900, ge=1)
     minio_poll_seconds: int = Field(default=60, ge=1)

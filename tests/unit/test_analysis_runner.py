@@ -1,6 +1,6 @@
 """In-container command, secret environment and artifact contract tests."""
 
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 from subprocess import TimeoutExpired
 from uuid import uuid4
@@ -217,66 +217,6 @@ def test_runner_does_not_decode_database_password_twice(
     assert seen['env']['ALERTA_DB_PASSWORD'] == 'abc%40def'
 
 
-def test_prod_load_runner_sets_review_gate_from_verified_settings(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """The upstream wrapper receives only the validated clone evidence."""
-    digest = 'a' * 64
-    settings = Settings(
-        _env_file=None,
-        environment='prod',
-        analysis_output_root=tmp_path / 'outputs',
-        analysis_database_url=(
-            'postgresql+psycopg://analysis_e2e_writer:secret'
-            '@analysis-e2e-db:5432/analysis_e2e'
-        ),
-        analysis_staging_target_host='analysis-e2e-db',
-        analysis_staging_target_database='analysis_e2e',
-        analysis_staging_target_role='analysis_e2e_writer',
-        analysis_staging_backup_verified=True,
-        analysis_staging_backup_sha256=digest,
-        analysis_e2e_coverage='MG',
-        analysis_e2e_epiweek='202639',
-    )
-    monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.require_staging_load_target',
-        lambda *_args: None,
-    )
-    monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.shutil.which',
-        lambda *_args, **_kwargs: '/usr/local/bin/psql',
-    )
-    monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner._analysis_load_lock',
-        lambda *_args: nullcontext(),
-    )
-    seen: dict[str, object] = {}
-
-    def capture(_args, env, _log_path, _timeout):
-        seen.update(env)
-        output = settings.analysis_output_root / str(job.job_id)
-        write_contract_outputs(output)
-        maps = output / 'incidence_maps'
-        maps.mkdir()
-        (maps / 'map.png').write_bytes(b'png')
-        return 0
-
-    monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.run_scientific_process', capture
-    )
-    monkeypatch.setenv('INFODENGUE_PIPELINE_ANALYSIS_LOAD', 'false')
-    monkeypatch.setenv(
-        'INFODENGUE_PIPELINE_ANALYSIS_STAGING_BACKUP_SHA256', 'b' * 64
-    )
-    job = request(load=True)
-    result = InContainerAnalysisRunner(settings).run(job)
-
-    assert result.succeeded
-    assert seen['INFODENGUE_PIPELINE_ENVIRONMENT'] == 'prod'
-    assert seen['INFODENGUE_PIPELINE_ANALYSIS_LOAD'] == 'true'
-    assert seen['INFODENGUE_PIPELINE_ANALYSIS_STAGING_BACKUP_SHA256'] == digest
-
-
 def test_runner_contains_output_path_and_handles_nonzero_or_timeout(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -379,32 +319,6 @@ def test_analysis_runner_does_not_fall_back_to_source_database(
     )
     with pytest.raises(ValueError, match='analysis database URL'):
         InContainerAnalysisRunner(settings).run(request())
-
-
-def test_prod_load_requires_sql_review_wrapper(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """A changed PATH fails before any scientific process can start."""
-    settings = Settings(
-        _env_file=None,
-        environment='prod',
-        analysis_database_url='postgresql://writer:secret@analysis-e2e-db/analysis_e2e',
-        analysis_output_root=tmp_path / 'outputs',
-    )
-    monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.require_staging_load_target',
-        lambda *_args: None,
-    )
-    monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.shutil.which',
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        'infodengue_pipeline.analysis.runner.run_scientific_process',
-        lambda *_args: pytest.fail('scientific process started'),
-    )
-    with pytest.raises(ValueError, match='SQL review wrapper missing'):
-        InContainerAnalysisRunner(settings).run(request(load=True))
 
 
 def test_analysis_runner_rejects_incomplete_target_database(

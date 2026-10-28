@@ -1,7 +1,6 @@
 """Finite in-container execution of the scientific job contract."""
 
 import os
-import shutil
 import signal
 import subprocess  # nosec B404
 import time
@@ -21,12 +20,6 @@ from infodengue_pipeline.config import Settings, get_settings
 from infodengue_pipeline.models import (
     AnalysisJobRequest,
     AnalysisJobResult,
-)
-from infodengue_pipeline.production.target import (
-    ANALYSIS_E2E_DATABASE,
-    ANALYSIS_E2E_HOST,
-    ANALYSIS_E2E_ROLE,
-    RESTORE_EVIDENCE_SQL,
 )
 
 logger = structlog.get_logger(__name__)
@@ -182,51 +175,6 @@ def validate_outputs(output_dir: Path, request: AnalysisJobRequest) -> None:
             raise ValueError('missing non-empty incidence map output')
 
 
-def require_staging_load_target(
-    settings: Settings, request: AnalysisJobRequest, database_url: str
-) -> None:
-    """Gate scientific writes in the prod profile."""
-    if settings.environment != 'prod' or not request.load:
-        return
-    parsed = make_url(database_url)
-    expected = (
-        ANALYSIS_E2E_HOST,
-        ANALYSIS_E2E_DATABASE,
-        ANALYSIS_E2E_ROLE,
-    )
-    if (
-        not settings.analysis_staging_backup_verified
-        or not settings.analysis_staging_backup_sha256
-        or len(settings.analysis_staging_backup_sha256) != 64
-        or settings.analysis_staging_target_host != expected[0]
-        or settings.analysis_staging_target_database != expected[1]
-        or settings.analysis_staging_target_role != expected[2]
-        or (parsed.host, parsed.database, parsed.username) != expected
-        or request.coverage.value != settings.analysis_e2e_coverage
-        or str(request.epiweek) != settings.analysis_e2e_epiweek
-    ):
-        raise ValueError('production analysis staging load gate failed')
-    engine = create_engine(database_url, hide_parameters=True)
-    try:
-        with engine.connect() as connection:
-            identity = connection.execute(
-                text('SELECT current_database(), current_user')
-            ).one()
-            if tuple(identity) != expected[1:]:
-                raise ValueError(
-                    'production analysis staging load gate failed'
-                )
-            restored = connection.execute(
-                text(RESTORE_EVIDENCE_SQL), {'environment': 'staging'}
-            ).scalar_one()
-            if restored != settings.analysis_staging_backup_sha256:
-                raise ValueError(
-                    'production analysis staging restore gate failed'
-                )
-    finally:
-        engine.dispose()
-
-
 class InContainerAnalysisRunner:
     """Execute the scientific process in the analysis worker container."""
 
@@ -248,15 +196,6 @@ class InContainerAnalysisRunner:
         if settings.analysis_database_url is None:
             raise ValueError('analysis database URL is not configured')
         database_url = settings.analysis_database_url.get_secret_value()
-        require_staging_load_target(settings, request, database_url)
-        if settings.environment == 'prod' and request.load:
-            if (
-                shutil.which('psql', path=env.get('PATH'))
-                != '/usr/local/bin/psql'
-            ):
-                raise ValueError(
-                    'production analysis SQL review wrapper missing'
-                )
         database = make_url(database_url)
         if not database.host or not database.database or not database.username:
             raise ValueError('analysis database URL is incomplete')
@@ -272,19 +211,6 @@ class InContainerAnalysisRunner:
                 'ALERTA_INPUT_FINGERPRINT': request.input_fingerprint,
             }
         )
-        if settings.environment == 'prod' and request.load:
-            # The pinned Makim task is image-patched to invoke this wrapper
-            # by absolute path. Pass the review gate from validated settings,
-            # never from inherited process environment.
-            env.update(
-                {
-                    'INFODENGUE_PIPELINE_ENVIRONMENT': 'prod',
-                    'INFODENGUE_PIPELINE_ANALYSIS_LOAD': 'true',
-                    'INFODENGUE_PIPELINE_ANALYSIS_STAGING_BACKUP_SHA256': (
-                        settings.analysis_staging_backup_sha256 or ''
-                    ),
-                }
-            )
         log_path = output_dir / 'pipeline-runner.log'
         logger.info(
             'analysis_job_started',

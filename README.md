@@ -5,6 +5,9 @@ orchestration for InfoDengue. AlertaDengue remains the authority for content
 inspection, canonical movement, manifest creation, stage, merge, and rollback.
 This repository coordinates MinIO ingress, completion events, readiness,
 durable analysis job state, and containerized scientific execution.
+It owns the queue and workflow lifecycle, including scheduling, retries,
+idempotency, and execution status; it invokes SINAN ingestion and scientific
+analysis through their existing application and Makim interfaces.
 
 ```text
 MinIO
@@ -54,11 +57,6 @@ manual recovery after submission. It exercised ingress through RData and SQL
 artifact checks. SQL application and map generation were not exercised. See
 [operations](docs/operations.md) for the validated scope. No production
 cutover is claimed.
-
-Issue #10's production-profile scientific load procedure is documented in the
-[staging analysis runbook](docs/issue10-staging-analysis-e2e.md). It requires a
-separate manual staging execution and has not established scientific acceptance
-from local tests.
 
 ## License
 

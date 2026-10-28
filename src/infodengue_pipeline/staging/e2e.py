@@ -232,20 +232,15 @@ def load_terminal_analysis_job(
 
 
 def validate_configuration(
-    settings: Settings,
-    object_key: str,
-    timeout: float,
-    *,
-    environment: str = 'staging',
-    load: bool = False,
+    settings: Settings, object_key: str, timeout: float
 ) -> None:
     """Reject unsafe staging validation settings before polling services."""
-    if settings.environment != environment:
-        raise ValueError(f'E2E requires environment={environment}')
+    if settings.environment != 'staging':
+        raise ValueError('staging E2E requires environment=staging')
     if settings.alerta_source_database_url is None:
         raise ValueError('AlertaDengue source database is not configured')
-    if settings.analysis_load != load:
-        raise ValueError(f'E2E requires analysis_load={str(load).lower()}')
+    if settings.analysis_load:
+        raise ValueError('staging E2E requires analysis_load=false')
     if not settings.minio_prefix or not object_key.startswith(
         settings.minio_prefix
     ):
@@ -257,18 +252,11 @@ def validate_configuration(
 
 
 def validate_e2e(
-    object_key: str,
-    timeout: float = 7200,
-    settings: Settings | None = None,
-    *,
-    environment: str = 'staging',
-    load: bool = False,
+    object_key: str, timeout: float = 7200, settings: Settings | None = None
 ) -> ValidationResult:
     """Validate one explicit object and its exact staging analysis job."""
     settings = settings or get_settings()
-    validate_configuration(
-        settings, object_key, timeout, environment=environment, load=load
-    )
+    validate_configuration(settings, object_key, timeout)
     source_url = settings.alerta_source_database_url
     if source_url is None:
         raise ValueError('AlertaDengue source database is not configured')
@@ -359,11 +347,7 @@ def validate_e2e(
         lambda: load_terminal_analysis_job(sessions, workflow),
     )
     if job.status is AnalysisJobStatus.FAILED:
-        raise RuntimeError('analysis job failed; inspect the retained job')
-    if job.load != load:
-        raise RuntimeError('analysis job load flag differs from E2E profile')
-    if job.attempts != 1:
-        raise RuntimeError(f'analysis job attempts={job.attempts}')
+        raise RuntimeError(f'analysis job failed: {job.last_error}')
     report('analysis succeeded', f' attempts={job.attempts}')
     current_workflow = load_current_workflow(
         sessions, workflow_input, settings
@@ -382,7 +366,7 @@ def validate_e2e(
         workflow.epiweek,
         workflow.fingerprint,
         cores=job.cores,
-        load=load,
+        load=False,
     )
     print('[II] validating analysis artifacts', flush=True)
     validate_outputs(Path(job.output_dir), request)
