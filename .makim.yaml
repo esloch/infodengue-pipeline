@@ -103,7 +103,7 @@ groups:
             type: string
             default: "7200"
         run: >-
-          docker compose --env-file .env.staging
+          docker compose -p infodengue-pipeline-staging --env-file .env.staging
           -f containers/compose-staging.yaml run --rm validator
           python scripts/validate_staging_e2e.py
           --object-key "${{ args.object_key }}"
