@@ -19,6 +19,12 @@ The pipeline does not parse SINAN content or import Django/R code. The incoming
 filename is provenance only. The existing AlertaDengue watcher and ingestion
 commands decide the file's disease, coverage, and epiweek.
 
+The reusable orchestration layer owns ingress coordination, completion events,
+workflow readiness, persisted execution state, scheduling, retries, and finite
+worker invocation. It relies on the existing AlertaDengue watcher and
+`makim pipeline.refresh-alertas-job` command for workload execution; it does
+not duplicate their scientific or ingestion logic.
+
 ## End-to-end flow
 
 ```text

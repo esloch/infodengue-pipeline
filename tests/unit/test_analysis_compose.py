@@ -194,7 +194,7 @@ def test_pipeline_urls_use_unique_network_aliases(example: str) -> None:
     assert '@pipeline-postgres:5432/' in values
     assert '@pipeline-rabbitmq:5672//' in values
     if example in ('.env.staging.example', '.env.prod.example'):
-        assert '@postgres:5432/alerta' in values
+        assert '@postgres:5432/dengue' in values
         assert '@alerta-postgres:' not in values
 
 

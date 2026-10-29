@@ -5,6 +5,9 @@ orchestration for InfoDengue. AlertaDengue remains the authority for content
 inspection, canonical movement, manifest creation, stage, merge, and rollback.
 This repository coordinates MinIO ingress, completion events, readiness,
 durable analysis job state, and containerized scientific execution.
+It owns the queue and workflow lifecycle, including scheduling, retries,
+idempotency, and execution status; it invokes SINAN ingestion and scientific
+analysis through their existing application and Makim interfaces.
 
 ```text
 MinIO

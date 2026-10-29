@@ -260,6 +260,24 @@ boundary; database and Compose diagnostics are suppressed to avoid printing
 credentials. The check does not prove that the source or analysis role lacks
 write grants; provision and audit those roles separately.
 
+## Read-only deployment validation
+
+On the staging host, point the private production-profile files at staging
+resources only, keep `INFODENGUE_PIPELINE_ANALYSIS_LOAD=false` in both files,
+and start the reviewed profile. Then run:
+
+```sh
+uv run makim prod.validate
+```
+
+The command inspects the rendered Compose configuration and running worker
+states, then runs finite probes inside the ingestion and analysis workers. It
+checks pipeline PostgreSQL and migration revision, RabbitMQ, MinIO, the
+AlertaDengue source connection, the analysis database, and worker filesystem
+access. It does not start services or apply migrations. Database probes issue
+only `SELECT`; the MinIO probe does not upload an object. The validator reports
+failed boundaries without printing connection diagnostics or credentials.
+
 ## Starting the production profile
 
 These commands describe the production-profile lifecycle. Do not start the

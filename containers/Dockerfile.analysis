@@ -1,4 +1,5 @@
 ARG ALERTA_ANALYSIS_BASE_IMAGE
+ARG ALERTA_ANALYSIS_REVISION=27a03f26a9bf366597ef135e7da8d2f620ea9a8e
 
 FROM ghcr.io/astral-sh/uv:0.11.14 AS uv
 
@@ -16,6 +17,11 @@ RUN uv build --wheel --out-dir /dist \
 
 
 FROM ${ALERTA_ANALYSIS_BASE_IMAGE}
+
+ARG ALERTA_ANALYSIS_REVISION
+RUN test "${ALERTA_ANALYSIS_REVISION}" = \
+      "27a03f26a9bf366597ef135e7da8d2f620ea9a8e"
+LABEL org.infodengue.alertadengueanalise.revision="${ALERTA_ANALYSIS_REVISION}"
 
 COPY --from=wheel-builder /dist/ /tmp/pipeline-dist/
 

@@ -15,4 +15,4 @@ case "${fixture,,}" in
 esac
 export STAGING_E2E_FIXTURE_HOST_PATH="$fixture"
 export STAGING_E2E_FIXTURE_CONTAINER_PATH="/tmp/staging-e2e-fixture${suffix}"
-docker compose --env-file .env.staging -f containers/compose-staging.yaml run --rm --no-deps e2e-runner python scripts/run_staging_e2e.py --fixture "$STAGING_E2E_FIXTURE_CONTAINER_PATH" --timeout-seconds "$2"
+docker compose -p infodengue-pipeline-staging --env-file .env.staging -f containers/compose-staging.yaml run --rm --no-deps e2e-runner python scripts/run_staging_e2e.py --fixture "$STAGING_E2E_FIXTURE_CONTAINER_PATH" --timeout-seconds "$2"
