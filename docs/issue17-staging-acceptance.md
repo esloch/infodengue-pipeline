@@ -1,8 +1,10 @@
 # Issue #17: PR #18 production-profile staging acceptance
 
-This document records the development VPS check and gives the manual procedure
-for the actual staging server. The live acceptance procedure has not run. Do
-not run its commands on the development VPS or against production.
+This document records the development VPS check, the manual staging procedure,
+and the observed staging ingress acceptance performed on 2026-10-30. The five
+isolated ingress reliability scenarios passed. The complete AlertaDengue
+watcher/ingestion integration has not been validated with a fresh approved SINAN
+fixture. Do not run its commands on the development VPS or against production.
 
 ## Development VPS findings
 
@@ -16,11 +18,10 @@ staging services were started and no objects were uploaded.
 `uv run pytest -q` passed 240 tests; 2 PostgreSQL tests were skipped because a
 dedicated disposable PostgreSQL URL was not configured. Regression coverage
 includes replacement, unchanged-content deduplication, interrupted download,
-prepared-file recovery and post-publication recovery. This is not live staging
-acceptance. The local analysis image label identified AlertaDengueAnalise
-revision `27a03f26a9bf366597ef135e7da8d2f620ea9a8e`; exact immutable image
-identity for PR #18 was not validated or deployed. No acceptance object IDs,
-hashes, ingestion run IDs or job IDs exist.
+prepared-file recovery and post-publication recovery. These were development-only results. The local analysis image label identified
+AlertaDengueAnalise revision `27a03f26a9bf366597ef135e7da8d2f620ea9a8e`;
+the deployed scientific base image's exact upstream revision provenance remains
+unverified. Actual staging ingress evidence is recorded below.
 
 ## Staging prerequisites
 
@@ -34,8 +35,10 @@ Before starting, the staging operator must verify and record:
 - Staging SSH target and reviewed PR #18 full Git commit SHA.
 - Existing healthy `infodengue-staging_infodengue` integration network,
   AlertaDengue PostgreSQL and MinIO services.
-- Existing watcher unit `infodengue-sinan-watcher.service` is the sole watcher
-  for `/opt/data/staging/sinan/incoming`; no manually started watcher exists.
+- Verify exactly one running AlertaDengue watcher for
+  `/opt/data/staging/sinan/incoming` and its actual process ancestry. The
+  observed staging watcher was started via `makim ingestion.watch-start`, not
+  an established systemd user unit.
 - Staging MinIO endpoint and bucket, exact selected prefix, and every mirror
   or pipeline consumer. Confirm the prefix is empty and exclusive: for another
   consumer on that bucket, neither prefix may contain the other. Exclude this
@@ -68,9 +71,8 @@ docker network inspect infodengue-staging_infodengue --format '{{.Name}}'
 docker ps --format '{{.Names}} {{.Image}} {{.Status}} {{.Networks}}'
 docker volume ls --format '{{.Name}}'
 test -d /opt/data/staging/sinan/incoming
-systemctl --user is-active infodengue-sinan-watcher.service
-systemctl --user show infodengue-sinan-watcher.service \
-  --property=MainPID --property=ActiveState
+pgrep -af 'ingestion_watcher.py|ingestion.watch-start'
+# Verify exactly one active watcher; do not start an additional watcher.
 findmnt -T /opt/data/staging/sinan
 findmnt -T /opt/data/staging/sinan/incoming
 stat -c '%n %F %a %u:%g' /opt/data/staging/sinan /opt/data/staging/sinan/incoming
@@ -235,21 +237,90 @@ stop unrelated staging services. Record final service state and sanitized
 evidence below. A successful rehearsal does not transfer production
 synchronization ownership.
 
-## Acceptance results
+## Acceptance results: 2026-10-30 staging
 
-Fill with observed staging evidence only; do not infer live passes from local
-tests.
+### Scope and deployment
 
-| Test | Expected | Actual | Result |
-|---|---|---|---|
-| Production profile / `prod.validate` | Healthy services; all checks pass; load false | Pending staging run | BLOCKED |
-| Initial upload | One complete materialization and ingestion | Pending | BLOCKED |
-| Unchanged scan | No new publication or ingestion | Pending | BLOCKED |
-| Same-key replacement | New identity/run; original history retained | Pending | BLOCKED |
-| Same-content replacement | Skipped; no new run | Pending | BLOCKED |
-| Interrupted download/restart | Safe recovery; no duplicate publication | Pending | BLOCKED |
-| Existing watcher | Consumes complete published files | Pending | BLOCKED |
+The live tests used the already deployed PR #18 pipeline implementation with
+`INFODENGUE_PIPELINE_ENVIRONMENT=prod` and
+`INFODENGUE_PIPELINE_ANALYSIS_LOAD=false`. The staging MinIO bucket was
+`sinan-infodengue-issue9`, with prefix `issue17-prod-rehearsal/`.
+The tested checkout HEAD was
+`5c651a53eda7ba0c40c161b39ea8f240a5e12a6e`.
 
-This document was prepared on the development VPS. It is not evidence of live
-staging acceptance. Merge PR #18 only after an operator records and reviews
-the staging results.
+A dedicated test writer uploaded synthetic CSV payloads. The existing pipeline
+runtime account read them. Real `IngressCoordinator`, `MinioObjectStore`
+and pipeline PostgreSQL persisted the results. During each controlled test,
+`worker-ingestion` and `worker-beat` were stopped and temporary one-off
+containers ran scans with incoming overridden to
+`/var/lib/pipeline/issue17-acceptance/incoming`, corresponding to host path
+`/opt/data/staging/sinan/issue17-acceptance/incoming`. That path is *not*
+the real AlertaDengue watcher input. The running AlertaDengue watcher itself
+was not changed. The two pipeline workers were subsequently restored.
+
+The final `uv run makim prod.validate` exited successfully. Pipeline
+PostgreSQL showed four ingress rows under the acceptance prefix, with empty
+`last_error` in the final query.
+
+### Same-key scenario evidence
+
+Object:
+`issue17-prod-rehearsal/acceptance-3c8331741d754a84a4d281c946ac8007.csv`
+
+| Version | SHA-256 | Ingress status |
+|---|---|---|
+| A | `d09db7ab67144c162b284e106cea33fad925c521fcccc7be657a11dbb9d39e15` | `materialized` |
+| B (same key, different bytes) | `56a3a8c9684634d294546337ffd2a15170ff98010ea1f0f3714713c6f3b44bb7` | `materialized` |
+| B again (same SHA, changed multipart ETag) | `56a3a8c9684634d294546337ffd2a15170ff98010ea1f0f3714713c6f3b44bb7` | `skipped` |
+
+The initial scan materialized one full hash-verified file; a second unchanged
+scan materialized zero. Replacing the exact key with B materialized one new
+file while retaining A's database row. Reuploading B with a different
+multipart ETag created a new `skipped` row and no new publication.
+
+### Injected transfer interruption and recovery
+
+Object:
+`issue17-prod-rehearsal/recovery-ed5c017101ca410784c5978ecf9e3d7c.csv`
+
+SHA-256:
+`4b86d5757d07bc541d05852ad9930801c518782c4714757f82e7901f389939bf`
+
+An injected `fget_object` exception after creating a partial temporary file
+produced `materialized=0`, `status=failed`, and no published CSV.
+Retried against the real MinIO object, the scanner produced
+`materialized=1`, `status=materialized`, with the matching SHA-256.
+Another scan materialized zero. This **was not** a live worker-process kill;
+process interruption and crash windows have separate automated regression
+coverage.
+
+### Acceptance matrix
+
+| Check | Result | Evidence/limitation |
+|---|---|---|
+| Production-profile validator | PASS | `prod.validate` exited 0 after workers restored |
+| Initial isolated materialization | PASS | New `materialized` row; complete file hash matched |
+| Unchanged scan | PASS | Zero new publication |
+| Same-key changed-content replacement | PASS | New SHA-256; second `materialized` row |
+| Same-content replacement, changed ETag | PASS | Third row `skipped`; no new file |
+| Injected interrupted download and retry | PASS | No partial publication; recovered and idempotent |
+| Real worker termination during download | NOT TESTED | No live process kill was performed |
+| Fresh SINAN through AlertaDengue watcher | PENDING | No fresh, approved ingestion-compatible fixture was available |
+| AlertaDengue `ingestion.run` / downstream analysis | PENDING | Synthetic CSV was intentionally isolated; no run/job asserted |
+| Scientific base image revision provenance | PENDING VERIFICATION | Exact upstream revision not independently confirmed for deployed base |
+
+### Release boundary and follow-up
+
+These results validate live **ingress reliability**, not complete SINAN
+ingestion or scientific processing. Issue #17 requires complete staging
+workflow validation before production deployment. A successful run through
+the existing AlertaDengue watcher and `ingestion.run` remains an explicit
+acceptance gap; do not report the entire issue as satisfied until it is
+addressed or the acceptance scope is reviewed and changed.
+
+The running pipeline workers were restored after testing, but the configured
+prefix still contains synthetic acceptance objects. Before routine scanning
+or cutover, disable the synthetic prefix through a reviewed configuration
+change and verify routing so these objects cannot subsequently reach the
+real monitored directory. Preserve evidence and pipeline state; do not
+perform undocumented destructive cleanup.
