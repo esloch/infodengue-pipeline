@@ -141,6 +141,7 @@ seconds). Read-only `load=false` jobs do not acquire this lock.
 Inspect structured logs using `object_id`, `sha256`, `run_id`, `event_id`,
 `coverage`, `epiweek`, `input_fingerprint`, and `job_id`. Secrets and database
 passwords must not be logged.
+
 ## Staging replacement and recovery validation
 
 Use only staging credentials, a dedicated staging MinIO prefix, the staging
@@ -178,6 +179,13 @@ The parent must allow the worker's runtime UID to create
 the private staging directory. The coordinator keeps that directory at mode
 `0700` and publishes files at mode `0640`; the host watcher must run as the
 same UID or have the worker's GID and directory traversal access to read them.
-Do not clean the staging
-directory while an ingress record is in `discovered` status with a SHA-256:
-that staged file is the durable recovery marker.
+Do not clean the staging directory while an ingress record is in `discovered`
+status with a SHA-256: that staged file is the recovery marker.
+
+If validation fails, stop the pipeline scanner and Beat before re-enabling
+legacy synchronization for the prefix. Let the existing watcher finish any
+file already published to incoming; preserve ingress rows, staged files, and
+ingestion history for diagnosis. Restore legacy synchronization only after
+confirming the new materializer is inactive for that prefix. Reverse this
+sequence for another staging attempt: disable legacy synchronization first,
+then enable the pipeline scanner. Never run both publishers for one prefix.

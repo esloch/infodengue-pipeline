@@ -45,6 +45,49 @@ jobs:
         run: >-
           test "$(git -C analysis-source rev-parse HEAD)"
           = 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+      - name: Prepare verified pinned INLA archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p analysis-source/.ci-inla
+          fetch_verified() {
+            local url="$1" expected="$2" target="$3" attempt
+            for attempt in 1 2 3 4 5; do
+              if curl --fail --location --silent --show-error \
+                  --retry 3 --retry-all-errors --output "$target" "$url" \
+                  && printf '%s  %s\n' "$expected" "$target" | sha256sum --check; then
+                return 0
+              fi
+              if [[ "$attempt" == 5 ]]; then return 1; fi
+              sleep 5
+            done
+          }
+          fetch_verified \
+            'https://inla.r-inla-download.org/R/testing/src/contrib/INLA_26.01.26-1.tar.gz' \
+            '0e2900dcf529f83d8d844dcf1b08013da35bf2a513548f252abc96dead20f56b' \
+            'analysis-source/.ci-inla/INLA_26.01.26-1.tar.gz'
+          fetch_verified \
+            'https://www.inla.r-inla-download.org/Linux-builds/CentOS%20Linux-7%20%28Core%29%20%5Bx86_64%5D/Version_26.01.26-1/64bit.tgz' \
+            'ef41b9d3d99c42065c807984fb56f654fbba312c6e5687e31800e80722f087a1' \
+            'analysis-source/.ci-inla/64bit.tgz'
+          # Redirect only the pinned installer's downloads to verified local files.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          script = Path('analysis-source/scripts/install_inla.sh')
+          content = script.read_text()
+          replacements = {
+              'pkg_url <- "https://inla.r-inla-download.org/R/testing/src/contrib/INLA_26.01.26-1.tar.gz"':
+                  'pkg_url <- "/opt/alertadengueanalise/.ci-inla/INLA_26.01.26-1.tar.gz"',
+              'download.file(bin_url, tf, mode = "wb", quiet = FALSE)':
+                  'stopifnot(file.copy("/opt/alertadengueanalise/.ci-inla/64bit.tgz", tf, overwrite = TRUE))',
+          }
+          for old, new in replacements.items():
+              if content.count(old) != 1:
+                  raise SystemExit(f'pinned INLA installer changed: {old}')
+              content = content.replace(old, new)
+          script.write_text(content)
+          PY
       - name: Build pinned scientific base image
         run: >-
           docker build -t alertadengueanalise:ci
