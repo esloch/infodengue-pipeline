@@ -26,8 +26,11 @@ repository. Stop on any unknown or failed check.
 1. Confirm the approved fixture is a valid SINAN CSV or DBF, record its SHA-256,
    and use the read-only source role to verify that the SHA-256 is absent from
    **all** `ingestion.run` statuses. Record its expected UF, epiweek, and
-   canonical disease code. An ambiguous `A92` run without canonical CID is not
-   usable; the bridge expects `A90`, `A92.0`, or `A928` as appropriate.
+   canonical disease code. The bridge accepts `disease=A90`, `A92.0`, or
+   `A928` with a null `canonical_cid10`, and the coarse `disease=A92` only
+   when `canonical_cid10` is `A92.0` or `A928`. It also accepts a matching
+   canonical CID alongside an exact disease code. Bare `A92` is ambiguous,
+   and conflicting disease and canonical CID values are rejected.
 2. Verify a recent staging scientific database backup by checking its restore
    result and selected table/row checks. Record backup identity and verification
    time. Do not make the rehearsal the first test of the backup.

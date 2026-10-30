@@ -37,22 +37,20 @@ class CompletedRun:
 
 
 def resolve_run_disease(disease: str, canonical_cid10: str | None) -> Disease:
-    """Resolve an upstream coarse disease plus its authoritative CID-10."""
+    """Resolve an upstream coarse or canonical disease and optional CID-10."""
     coarse = disease.strip().upper()
     canonical = canonical_cid10.strip().upper() if canonical_cid10 else None
     if canonical is None:
-        if coarse == 'A90':
-            return disease_from_cid10('A90')
         if coarse == 'A92':
             raise ValueError(
                 'AlertaDengue run has ambiguous A92 disease '
                 'without canonical CID'
             )
-        raise ValueError(f'unsupported AlertaDengue disease code {coarse!r}')
+        return disease_from_cid10(coarse)
 
     resolved = disease_from_cid10(canonical)
     expected_coarse = 'A90' if canonical == 'A90' else 'A92'
-    if coarse != expected_coarse:
+    if coarse not in (expected_coarse, canonical):
         raise ValueError(
             f'inconsistent AlertaDengue disease {coarse!r} and canonical '
             f'CID {canonical!r}'
