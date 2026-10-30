@@ -134,6 +134,7 @@ def test_minio_materialization_is_atomic_and_contained(tmp_path: Path) -> None:
     materialized = store.materialize('../arbitrary/raw.csv', target)
     assert store.bucket_exists()
     assert store.list()[0].version_id == 'version-1'
+    assert 'include_version' not in client.list_objects.call_args.kwargs
     assert materialized.bucket == 'sinan-infodengue-dev'
     assert materialized.key == '../arbitrary/raw.csv'
     assert materialized.etag == 'etag'
@@ -190,6 +191,21 @@ def test_stat_normalizes_sdk_null_and_real_versions(tmp_path: Path) -> None:
     client.stat_object.return_value.version_id = 'version-1'
     assert store.stat('raw.dbf', 'version-1').version_id == 'version-1'
     assert client.stat_object.call_args.kwargs == {'version_id': 'version-1'}
+
+
+def test_list_ignores_unsupported_objects_before_stat(tmp_path: Path) -> None:
+    """An unsupported key cannot break discovery of a supported object."""
+    client = Mock()
+    client.list_objects.return_value = [
+        Mock(object_name='notes.txt'),
+        Mock(object_name='chik.csv'),
+    ]
+    client.stat_object.return_value = Mock(
+        size=4, etag='etag', version_id='version-2'
+    )
+    listed = MinioObjectStore(client, 'bucket', tmp_path).list()
+    assert [item.key for item in listed] == ['chik.csv']
+    client.stat_object.assert_called_once_with('bucket', 'chik.csv')
 
 
 def test_minio_failure_cleans_temporary_and_preserves_final(
@@ -253,3 +269,5 @@ def test_object_store_builder_uses_configured_settings(
     store = build_object_store(settings)
     assert isinstance(store, MinioObjectStore)
     minio.Minio.assert_called_once()
+    with pytest.raises(ValueError, match='staging workspace'):
+        store.materialize('raw.csv', tmp_path / 'raw.csv')

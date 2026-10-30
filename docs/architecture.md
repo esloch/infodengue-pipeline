@@ -52,12 +52,20 @@ validated current-week RData and SQL → SUCCEEDED or FAILED
 Ingress rows are keyed by a SHA-256 of bucket, key, ETag, version ID, and
 size. Supported `.csv` and `.dbf` objects receive a deterministic UUID-based
 destination below `incoming_root`; key contents never become a filesystem
-path. The materializer computes the downloaded file SHA-256 used by
+path. Downloads and SHA-256 validation occur in a sibling staging directory
+on the same filesystem. The validated staging file and SHA-256 are committed
+as a prepared ingress record before an atomic rename publishes the file to the
+existing watcher. A subsequent scan publishes a still-staged file or finalizes
+the record if the rename removed it, even when the watcher has moved the
+incoming file. PostgreSQL advisory locks serialize each bucket/key during
+preparation and publication, including concurrent scans of one version.
+Persisted ingress status prevents a removed incoming file from being published
+again. A new metadata identity with the same SHA-256 as previously published
+content is recorded as skipped. The SHA-256 also correlates with
 `ingestion.run.sha256`.
-
-`worker-ingestion` runs with one Celery process and must remain a single
-replica while filesystem materialization lacks a persistent claim lease.
-Horizontal ingress scaling requires a durable claim/lease lifecycle.
+Only the pipeline materializes objects from a selected MinIO prefix; legacy
+MinIO synchronization must be disabled for that prefix before enabling it.
+The existing AlertaDengue watcher still owns canonical movement and ingestion.
 
 The completion adapter reads only `ingestion.run` fields and does not import
 the AlertaDengue application. Only `status=completed` creates an
@@ -112,8 +120,9 @@ The supported topology is one VPS / Docker host, with durable PostgreSQL and
 RabbitMQ state and isolated analysis output directories on a local filesystem.
 `load=false` can use multiple analysis workers only when they share that
 filesystem. Multi-host workers require a shared filesystem or a defined
-object-storage artifact contract. Horizontal ingress materialization is not
-supported until persistent claims/leases are implemented.
+object-storage artifact contract. Concurrent ingress scanners on one host
+share the staging and incoming filesystem and use PostgreSQL per-key locks.
+Multi-host ingress also needs a shared filesystem and a defined claim lifecycle.
 
 ## Future consumers
 

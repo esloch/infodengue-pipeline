@@ -181,6 +181,7 @@ class IngressStatus(StrEnum):
     MATERIALIZED = 'materialized'
     INGESTED = 'ingested'
     FAILED = 'failed'
+    SKIPPED = 'skipped'
 
 
 class IngressObjectRow(Base):

@@ -1,6 +1,7 @@
 """Durable MinIO discovery and atomic incoming materialization."""
 
 import hashlib
+import os
 import re
 
 from datetime import datetime, timezone
@@ -76,6 +77,23 @@ class IngressCoordinator:
     def scan(self) -> int:
         """Materialize new and retryable supported objects."""
         self._root.mkdir(parents=True, exist_ok=True)
+        staging_root = self._root.parent / f'.{self._root.name}-staging'
+        if staging_root.is_symlink():
+            raise RuntimeError(
+                'ingress staging directory must not be a symlink'
+            )
+        staging_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if staging_root.stat().st_uid != os.geteuid():
+            raise PermissionError(
+                'ingress staging directory has another owner'
+            )
+        staging_root.chmod(0o700)
+        if self._root.is_mount():
+            raise RuntimeError('incoming must not be a separate mountpoint')
+        if staging_root.stat().st_dev != self._root.stat().st_dev:
+            raise RuntimeError(
+                'ingress staging and incoming must share a filesystem'
+            )
         completed = 0
         for metadata in self._store.list(self._prefix):
             if Path(metadata.key).suffix.lower() not in {'.csv', '.dbf'}:
@@ -83,16 +101,9 @@ class IngressCoordinator:
             identity = object_identity(metadata)
             destination = safe_destination(self._root, metadata)
             object_id = uuid5(NAMESPACE_URL, identity)
+            staged = staging_root / destination.name
             with self._sessions.begin() as session:
-                if session.bind is not None and (
-                    session.bind.dialect.name == 'postgresql'
-                ):
-                    lock_key = int.from_bytes(
-                        bytes.fromhex(identity[:16]), 'big', signed=True
-                    )
-                    session.execute(
-                        select(func.pg_advisory_xact_lock(lock_key))
-                    )
+                self._lock_key(session, metadata)
                 row = session.scalar(
                     select(IngressObjectRow)
                     .where(IngressObjectRow.object_identity == identity)
@@ -101,6 +112,7 @@ class IngressCoordinator:
                 if row is not None and row.status in {
                     IngressStatus.MATERIALIZED,
                     IngressStatus.INGESTED,
+                    IngressStatus.SKIPPED,
                 }:
                     continue
                 if row is None:
@@ -116,46 +128,131 @@ class IngressCoordinator:
                         status=IngressStatus.DISCOVERED,
                     )
                     session.add(row)
-            exposed = False
-            try:
-                materialized = self._store.materialize(
-                    metadata.key, destination, metadata.version_id
-                )
-                exposed = True
-                if object_identity(materialized) != identity:
-                    raise IOError(
-                        f'MinIO object changed during materialization: '
-                        f'{metadata.key}'
+                    session.flush()
+                if row.status is IngressStatus.DISCOVERED and row.sha256:
+                    logger.info(
+                        'ingress_prepared_recovery',
+                        object_id=str(object_id),
+                        object_key=metadata.key,
                     )
-                digest = file_sha256(destination)
-            except Exception as exc:
-                if exposed:
-                    destination.unlink(missing_ok=True)
-                with self._sessions.begin() as session:
-                    row = session.get(IngressObjectRow, object_id)
-                    if row is not None:
+                else:
+                    try:
+                        materialized = self._store.materialize(
+                            metadata.key, staged, metadata.version_id
+                        )
+                        if object_identity(materialized) != identity:
+                            raise IOError(
+                                'MinIO object changed during materialization: '
+                                f'{metadata.key}'
+                            )
+                        if staged.stat().st_size != metadata.size:
+                            raise IOError(
+                                f'incomplete download for {metadata.key}'
+                            )
+                        digest = file_sha256(staged)
+                        previous = session.scalar(
+                            select(IngressObjectRow.object_id).where(
+                                IngressObjectRow.bucket == metadata.bucket,
+                                IngressObjectRow.object_key == metadata.key,
+                                IngressObjectRow.sha256 == digest,
+                                IngressObjectRow.status.in_(
+                                    (
+                                        IngressStatus.MATERIALIZED,
+                                        IngressStatus.INGESTED,
+                                        IngressStatus.SKIPPED,
+                                    )
+                                ),
+                                IngressObjectRow.object_id != object_id,
+                            )
+                        )
+                        row.sha256 = digest
+                        row.last_error = None
+                        if previous is not None:
+                            row.status = IngressStatus.SKIPPED
+                            staged.unlink(missing_ok=True)
+                            logger.info(
+                                'ingress_unchanged_content',
+                                object_id=str(object_id),
+                                object_key=metadata.key,
+                                sha256=digest,
+                            )
+                            continue
+                        staged.chmod(0o640)
+                        row.status = IngressStatus.DISCOVERED
+                    except Exception as exc:
+                        staged.unlink(missing_ok=True)
+                        row.sha256 = None
                         row.status = IngressStatus.FAILED
                         row.last_error = str(exc)[:512]
-                logger.error(
-                    'ingress_materialization_failed',
+                        logger.error(
+                            'ingress_materialization_failed',
+                            object_id=str(object_id),
+                            object_key=metadata.key,
+                            error_type=type(exc).__name__,
+                        )
+                        continue
+            with self._sessions.begin() as session:
+                self._lock_key(session, metadata)
+                row = session.get(
+                    IngressObjectRow, object_id, with_for_update=True
+                )
+                if row is None or row.status is not IngressStatus.DISCOVERED:
+                    continue
+                if row.sha256 is None:
+                    raise RuntimeError('prepared ingress has no SHA-256')
+                published = False
+                try:
+                    if staged.exists():
+                        if (
+                            staged.stat().st_size != metadata.size
+                            or file_sha256(staged) != row.sha256
+                        ):
+                            raise IOError('prepared ingress file changed')
+                        os.replace(staged, destination)
+                        published = True
+                    else:
+                        if destination.exists() and (
+                            destination.stat().st_size != metadata.size
+                            or file_sha256(destination) != row.sha256
+                        ):
+                            raise IOError('published ingress file changed')
+                        logger.info(
+                            'ingress_publication_recovered',
+                            object_id=str(object_id),
+                            object_key=metadata.key,
+                        )
+                    row.status = IngressStatus.MATERIALIZED
+                    row.materialized_at = datetime.now(timezone.utc)
+                    row.last_error = None
+                except Exception as exc:
+                    row.last_error = str(exc)[:512]
+                    logger.error(
+                        'ingress_publication_failed',
+                        object_id=str(object_id),
+                        object_key=metadata.key,
+                        error_type=type(exc).__name__,
+                    )
+                    continue
+            if published:
+                logger.info(
+                    'ingress_object_materialized',
                     object_id=str(object_id),
                     object_key=metadata.key,
-                    error_type=type(exc).__name__,
+                    sha256=row.sha256,
                 )
-                continue
-            with self._sessions.begin() as session:
-                row = session.get(IngressObjectRow, object_id)
-                if row is None:
-                    raise RuntimeError('ingress record disappeared')
-                row.sha256 = digest
-                row.status = IngressStatus.MATERIALIZED
-                row.materialized_at = datetime.now(timezone.utc)
-                row.last_error = None
-            logger.info(
-                'ingress_object_materialized',
-                object_id=str(object_id),
-                object_key=metadata.key,
-                sha256=digest,
-            )
-            completed += 1
+                completed += 1
         return completed
+
+    @staticmethod
+    def _lock_key(session: Session, metadata: ObjectMetadata) -> None:
+        """Serialize one bucket/key across PostgreSQL scan transactions."""
+        if session.bind is None or session.bind.dialect.name != 'postgresql':
+            return
+        lock_key = int.from_bytes(
+            hashlib.sha256(
+                f'{metadata.bucket}\0{metadata.key}'.encode()
+            ).digest()[:8],
+            'big',
+            signed=True,
+        )
+        session.execute(select(func.pg_advisory_xact_lock(lock_key)))

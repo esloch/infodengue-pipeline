@@ -57,21 +57,15 @@ class MinioObjectStore:
         )
 
     def list(self, prefix: str = '') -> list[ObjectMetadata]:
-        """List object metadata under a prefix."""
+        """List only current objects and resolve their version IDs."""
         return [
-            ObjectMetadata(
-                self._bucket,
-                item.object_name,
-                item.size,
-                item.etag,
-                _normalize_version_id(item.version_id),
-            )
+            self.stat(item.object_name)
             for item in self._client.list_objects(
                 self._bucket,
                 prefix=prefix,
                 recursive=True,
-                include_version=True,
             )
+            if Path(item.object_name).suffix.lower() in {'.csv', '.dbf'}
         ]
 
     def materialize(
@@ -80,10 +74,10 @@ class MinioObjectStore:
         destination: Path,
         version_id: str | None = None,
     ) -> ObjectMetadata:
-        """Atomically expose a complete download inside incoming workspace."""
+        """Atomically write a complete download in the staging workspace."""
         resolved = destination.resolve()
         if not resolved.is_relative_to(self._download_root):
-            raise ValueError('download destination escapes incoming workspace')
+            raise ValueError('download destination escapes staging workspace')
         resolved.parent.mkdir(parents=True, exist_ok=True)
         info = self.stat(key, version_id)
         descriptor, temporary_name = tempfile.mkstemp(
@@ -128,7 +122,10 @@ def build_object_store(
         http_client=http_client,
     )
     return MinioObjectStore(
-        client, settings.minio_bucket, settings.incoming_root
+        client,
+        settings.minio_bucket,
+        settings.incoming_root.parent
+        / f'.{settings.incoming_root.name}-staging',
     )
 
 

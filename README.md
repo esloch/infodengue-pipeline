@@ -35,6 +35,12 @@ generated SQL by default, or own production storage. See
 [operations](docs/operations.md), [production](docs/production.md), and
 [migration](docs/migration.md).
 
+For a given MinIO prefix, run only this pipeline's materializer after disabling
+legacy MinIO synchronization. It stages and publishes complete files to the
+existing AlertaDengue watcher; the watcher still owns canonical ingestion.
+See [staging validation and rollback](docs/operations.md#staging-replacement-and-recovery-validation)
+before changing synchronization ownership.
+
 ## Development
 
 Python 3.11, `uv`, Docker Compose, PostgreSQL, RabbitMQ, and MinIO are used for
