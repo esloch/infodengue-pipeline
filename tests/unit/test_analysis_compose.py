@@ -280,7 +280,7 @@ def test_production_worker_env_mounts_and_networks() -> None:
     assert '${PIPELINE_ANALYSIS_IMAGE:' in analysis
     assert '    build:' not in analysis
     assert '${PROD_SINAN_INCOMING_HOST_PATH:' in ingestion
-    assert ':/var/lib/pipeline/incoming' in ingestion
+    assert '/..:/var/lib/pipeline' in ingestion
     assert '${PROD_ANALYSIS_OUTPUT_HOST_PATH:' in analysis
     assert ':/var/lib/pipeline/analysis-output' in analysis
     assert '    volumes:' not in orchestration

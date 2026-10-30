@@ -106,7 +106,7 @@ services:
       timeout: 8s
       retries: 5
     volumes:
-      - pipeline_incoming:/var/lib/pipeline/incoming
+      - pipeline_incoming:/var/lib/pipeline
 
   worker-events:
     build:

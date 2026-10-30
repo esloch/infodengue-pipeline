@@ -1,7 +1,13 @@
 """Ingress and AlertaDengue completion bridge integration tests."""
 
+import os
+
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from stat import S_IMODE
+from threading import Barrier
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -35,7 +41,8 @@ from infodengue_pipeline.storage.ingress import (
     object_identity,
     safe_destination,
 )
-from sqlalchemy import select
+from sqlalchemy import create_engine, delete, event, select
+from sqlalchemy.orm import Session, sessionmaker
 
 
 class FakeStore:
@@ -44,6 +51,7 @@ class FakeStore:
     def __init__(self, objects: list[ObjectMetadata]) -> None:
         self.objects = objects
         self.downloads: list[str] = []
+        self.payload = b'fixture payload'
         self.fail = False
         self.fail_keys: set[str] = set()
 
@@ -70,7 +78,7 @@ class FakeStore:
         if self.fail or key in self.fail_keys:
             raise OSError('temporary object store failure')
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(b'fixture payload')
+        destination.write_bytes(self.payload)
         return next(
             item
             for item in self.objects
@@ -137,6 +145,237 @@ def test_ingress_identity_destination_and_deduplication(
         assert row.sha256 is not None
         assert row.status is IngressStatus.MATERIALIZED
         assert len(row.sha256) == 64
+
+
+def test_same_key_replacement_and_unchanged_content(
+    sessions, tmp_path: Path
+) -> None:
+    """A replacement is published once; a new ETag for old bytes is skipped."""
+    first = ObjectMetadata('sinan', 'chik.csv', 15, 'etag-1')
+    store = FakeStore([first])
+    root = tmp_path / 'incoming'
+    coordinator = IngressCoordinator(sessions, store, root)
+    assert coordinator.scan() == 1
+    safe_destination(root, first).unlink()
+
+    second = ObjectMetadata('sinan', 'chik.csv', 16, 'etag-2')
+    store.objects = [second]
+    store.payload = b'replacement data'
+    assert coordinator.scan() == 1
+    assert safe_destination(root, second).read_bytes() == store.payload
+    safe_destination(root, second).unlink()
+    assert IngressCoordinator(sessions, store, root).scan() == 0
+
+    third = ObjectMetadata('sinan', 'chik.csv', 16, 'etag-3')
+    store.objects = [third]
+    assert coordinator.scan() == 0
+    assert not safe_destination(root, third).exists()
+    assert len(store.downloads) == 3
+    with sessions() as session:
+        rows = session.scalars(select(IngressObjectRow)).all()
+        assert [row.status for row in rows] == [
+            IngressStatus.MATERIALIZED,
+            IngressStatus.MATERIALIZED,
+            IngressStatus.SKIPPED,
+        ]
+
+
+def test_staging_is_outside_watched_directory_and_retryable(
+    sessions, tmp_path: Path
+) -> None:
+    """An interrupted staged download never appears in incoming."""
+    metadata = ObjectMetadata('sinan', 'zika.dbf', 15, 'etag')
+    root = tmp_path / 'incoming'
+
+    class InterruptedStore(FakeStore):
+        def materialize(
+            self, key: str, destination: Path, version_id: str | None = None
+        ) -> ObjectMetadata:
+            assert not destination.is_relative_to(root)
+            assert list(root.iterdir()) == []
+            destination.write_bytes(b'partial')
+            if self.fail:
+                raise OSError('interrupted')
+            return super().materialize(key, destination, version_id)
+
+    store = InterruptedStore([metadata])
+    store.fail = True
+    coordinator = IngressCoordinator(sessions, store, root)
+    assert coordinator.scan() == 0
+    assert list(root.iterdir()) == []
+    assert list(tmp_path.glob('.incoming-staging/*')) == []
+    store.fail = False
+    assert coordinator.scan() == 1
+    assert safe_destination(root, metadata).read_bytes() == store.payload
+
+
+def test_prepared_file_recovers_after_publication_failure(
+    sessions, tmp_path: Path, monkeypatch
+) -> None:
+    """A committed staged file is retried without another download."""
+    from infodengue_pipeline.storage import ingress
+
+    metadata = ObjectMetadata('sinan', 'dengue.csv', 15, 'etag')
+    store = FakeStore([metadata])
+    root = tmp_path / 'incoming'
+    staged = (
+        tmp_path / '.incoming-staging' / safe_destination(root, metadata).name
+    )
+    replace = ingress.os.replace
+    interrupted = True
+
+    def fail_once(source, target) -> None:
+        nonlocal interrupted
+        if interrupted:
+            interrupted = False
+            raise OSError('interrupted before publication')
+        replace(source, target)
+
+    monkeypatch.setattr(ingress.os, 'replace', fail_once)
+    coordinator = IngressCoordinator(sessions, store, root)
+    assert coordinator.scan() == 0
+    assert staged.read_bytes() == store.payload
+    assert not safe_destination(root, metadata).exists()
+    with sessions() as session:
+        row = session.scalar(select(IngressObjectRow))
+        assert row is not None
+        assert row.status is IngressStatus.DISCOVERED
+        assert row.sha256 == file_sha256(staged)
+    assert IngressCoordinator(sessions, store, root).scan() == 1
+    assert store.downloads == [metadata.key]
+    assert S_IMODE(safe_destination(root, metadata).stat().st_mode) == 0o640
+    assert S_IMODE(staged.parent.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize('watcher_moves', [False, True])
+def test_interrupted_commit_recovers_without_republication(
+    sessions, tmp_path: Path, watcher_moves: bool
+) -> None:
+    """A failed commit after publication cannot trigger a duplicate."""
+    metadata = ObjectMetadata('sinan', 'chik.csv', 15, 'etag')
+    store = FakeStore([metadata])
+    root = tmp_path / 'incoming'
+    destination = safe_destination(root, metadata)
+    imported = tmp_path / 'imported.csv'
+
+    class InterruptingSession(Session):
+        pass
+
+    interrupted = True
+
+    @event.listens_for(InterruptingSession, 'before_commit')
+    def consume_then_interrupt(session: Session) -> None:
+        nonlocal interrupted
+        if not interrupted or not any(
+            isinstance(row, IngressObjectRow)
+            and row.status is IngressStatus.MATERIALIZED
+            for row in session.dirty
+        ):
+            return
+        interrupted = False
+        if watcher_moves:
+            destination.replace(imported)
+        raise OSError('database commit interrupted after publication')
+
+    guarded = sessionmaker(
+        sessions.kw['bind'], class_=InterruptingSession, expire_on_commit=False
+    )
+    with pytest.raises(OSError, match='database commit interrupted'):
+        IngressCoordinator(guarded, store, root).scan()
+    if watcher_moves:
+        assert imported.read_bytes() == store.payload
+        assert not destination.exists()
+    else:
+        assert destination.read_bytes() == store.payload
+    with sessions() as session:
+        row = session.scalar(select(IngressObjectRow))
+        assert row is not None
+        assert row.status is IngressStatus.DISCOVERED
+        assert row.sha256 == file_sha256(
+            imported if watcher_moves else destination
+        )
+    assert IngressCoordinator(sessions, store, root).scan() == 0
+    assert store.downloads == [metadata.key]
+    assert destination.exists() is not watcher_moves
+    with sessions() as session:
+        row = session.scalar(select(IngressObjectRow))
+        assert row is not None
+        assert row.status is IngressStatus.MATERIALIZED
+
+
+def test_staging_rejects_symlink_and_cross_filesystem(
+    sessions, tmp_path: Path, monkeypatch
+) -> None:
+    """Staging cannot redirect or require a non-atomic cross-device move."""
+    metadata = ObjectMetadata('sinan', 'dengue.csv', 15, 'etag')
+    store = FakeStore([metadata])
+    root = tmp_path / 'incoming'
+    staging = tmp_path / '.incoming-staging'
+    other = tmp_path / 'other'
+    other.mkdir()
+    staging.symlink_to(other, target_is_directory=True)
+    with pytest.raises(RuntimeError, match='must not be a symlink'):
+        IngressCoordinator(sessions, store, root).scan()
+    staging.unlink()
+
+    original_stat = Path.stat
+
+    def different_device(path: Path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if path == staging:
+            return SimpleNamespace(
+                st_dev=result.st_dev + 1, st_uid=result.st_uid
+            )
+        return result
+
+    monkeypatch.setattr(Path, 'stat', different_device)
+    with pytest.raises(RuntimeError, match='share a filesystem'):
+        IngressCoordinator(sessions, store, root).scan()
+    assert store.downloads == []
+
+
+def test_staging_rejects_incoming_bind_mount(
+    sessions, tmp_path: Path, monkeypatch
+) -> None:
+    """An incoming bind mount can prevent rename despite matching devices."""
+    root = tmp_path / 'incoming'
+    metadata = ObjectMetadata('sinan', 'dengue.csv', 15, 'etag')
+    monkeypatch.setattr(Path, 'is_mount', lambda path: path == root)
+    with pytest.raises(RuntimeError, match='separate mountpoint'):
+        IngressCoordinator(sessions, FakeStore([metadata]), root).scan()
+
+
+def test_concurrent_postgres_scans_publish_once(tmp_path: Path) -> None:
+    """The per-key PostgreSQL lock spans download and publication."""
+    database_url = os.environ.get('INFODENGUE_PIPELINE_TEST_POSTGRES_URL')
+    if not database_url:
+        pytest.skip('dedicated disposable PostgreSQL URL is not configured')
+    engine = create_engine(database_url, pool_pre_ping=True)
+    sessions = sessionmaker(engine, expire_on_commit=False)
+    metadata = ObjectMetadata(
+        'sinan', f'concurrency-{uuid4()}.csv', 15, 'etag'
+    )
+    store = FakeStore([metadata])
+    coordinator = IngressCoordinator(sessions, store, tmp_path / 'incoming')
+    barrier = Barrier(2)
+
+    def scan() -> int:
+        barrier.wait(timeout=5)
+        return coordinator.scan()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: scan(), range(2)))
+        assert sorted(results) == [0, 1]
+        assert store.downloads == [metadata.key]
+    finally:
+        with sessions.begin() as session:
+            session.execute(
+                delete(IngressObjectRow).where(
+                    IngressObjectRow.object_key == metadata.key
+                )
+            )
+        engine.dispose()
 
 
 def test_ingress_retries_failed_materialization_and_skips_other_formats(

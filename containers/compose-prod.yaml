@@ -79,7 +79,7 @@ services:
       - default
       - prod_integrations
     volumes:
-      - ${PROD_SINAN_INCOMING_HOST_PATH:?set shared incoming directory}:/var/lib/pipeline/incoming
+      - ${PROD_SINAN_INCOMING_HOST_PATH:?set shared incoming directory}/..:/var/lib/pipeline
     healthcheck:
       test:
         - CMD-SHELL

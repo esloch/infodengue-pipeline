@@ -52,12 +52,17 @@ validated current-week RData and SQL → SUCCEEDED or FAILED
 Ingress rows are keyed by a SHA-256 of bucket, key, ETag, version ID, and
 size. Supported `.csv` and `.dbf` objects receive a deterministic UUID-based
 destination below `incoming_root`; key contents never become a filesystem
-path. The materializer computes the downloaded file SHA-256 used by
+path. Downloads and SHA-256 validation occur in a sibling staging directory
+on the same filesystem. The validated staging file and SHA-256 are committed
+as a prepared ingress record before an atomic rename publishes the file to the
+existing watcher. A subsequent scan publishes a still-staged file or finalizes
+the record if the rename removed it, even when the watcher has moved the
+incoming file. PostgreSQL advisory locks serialize each bucket/key during
+preparation and publication, including concurrent scans of one version.
+Persisted ingress status prevents a removed incoming file from being published
+again. A new metadata identity with the same SHA-256 as previously published
+content is recorded as skipped. The SHA-256 also correlates with
 `ingestion.run.sha256`.
-
-`worker-ingestion` runs with one Celery process and must remain a single
-replica while filesystem materialization lacks a persistent claim lease.
-Horizontal ingress scaling requires a durable claim/lease lifecycle.
 
 The completion adapter reads only `ingestion.run` fields and does not import
 the AlertaDengue application. Only `status=completed` creates an
