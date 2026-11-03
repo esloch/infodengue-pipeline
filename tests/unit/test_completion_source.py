@@ -160,13 +160,17 @@ def test_source_normalizes_naive_timestamp_to_utc() -> None:
     ('disease', 'canonical', 'expected'),
     [
         ('A90', 'A90', 'A90'),
+        ('A90', None, 'A90'),
         ('A92', 'A92.0', 'A92.0'),
         ('A92', 'A928', 'A928'),
-        ('A90', None, 'A90'),
+        ('A92.0', None, 'A92.0'),
+        ('A928', None, 'A928'),
+        ('A92.0', 'A92.0', 'A92.0'),
+        ('A928', 'A928', 'A928'),
     ],
 )
 def test_resolve_run_disease(disease, canonical, expected) -> None:
-    """Resolve each supported canonical identity and legacy dengue."""
+    """Resolve coarse and exact source representations for all diseases."""
     from infodengue_pipeline.ingestion.completion import resolve_run_disease
 
     assert resolve_run_disease(disease, canonical).value == expected
@@ -178,6 +182,10 @@ def test_resolve_run_disease(disease, canonical, expected) -> None:
         ('A92', None, 'ambiguous A92'),
         ('A90', 'A92.0', 'inconsistent'),
         ('A92', 'A90', 'inconsistent'),
+        ('A92.0', 'A928', 'inconsistent'),
+        ('A928', 'A92.0', 'inconsistent'),
+        ('A92.0', 'A90', 'inconsistent'),
+        ('A928', 'A90', 'inconsistent'),
         ('A92', 'UNKNOWN', 'unsupported disease CID-10'),
     ],
 )

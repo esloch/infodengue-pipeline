@@ -13,6 +13,9 @@ infodengue-pipeline
 
 AlertaDengueAnalise
   R / INLA computation, RData, SQL generation, optional SQL application, maps
+
+AlertaDengue/boletins
+  national and state bulletin data access, PDF rendering, publication tooling
 ```
 
 The pipeline does not parse SINAN content or import Django/R code. The incoming
@@ -124,19 +127,22 @@ object-storage artifact contract. Concurrent ingress scanners on one host
 share the staging and incoming filesystem and use PostgreSQL per-key locks.
 Multi-host ingress also needs a shared filesystem and a defined claim lifecycle.
 
-## Future consumers
+## Bulletin boundary
 
-No downstream analysis completion event is emitted speculatively. Once a
-real consumer and event contract exist, publish a versioned event such as
-`analysis.succeeded` through the transactional outbox.
+An analysis job is already persisted as `SUCCEEDED` only after Makim exits zero
+and the runner validates its current-week outputs. The corresponding workflow
+is marked `SUCCEEDED` only while the job's input fingerprint is current. This
+is the durable trigger for a future bulletin job; a RabbitMQ delivery or an
+`ingestion.run` completion alone is not sufficient. No analysis completion
+event or bulletin job is currently implemented.
 
-BoletimQuinzenal is not currently a finite orchestratable job. Before adding a
-pipeline workload, it needs an explicit week and scope, noninteractive auth,
-image-contained dependencies, no runtime package installs or sibling paths,
-environment/secret-mounted credentials, a deterministic output directory,
-clear exit status, finite single-invocation execution, and rendering
-separated from explicitly enabled publication. Only then should the pipeline
-add a bulletin queue, persisted job, and worker image. See
+The verified bulletin source is `AlertaDengue/boletins`. It has command-line
+national and state PDF renderers, but their data, runtime and publication
+contracts need work before orchestration. A `load=false` analysis success
+generates SQL and RData without applying SQL or generating maps. It cannot
+prove that the historical alert tables read by the national bulletin have
+been updated. Bulletin dispatch therefore requires an explicit, verified
+scientific data-availability gate in addition to analysis success. See
 [future workload contract](future-workloads.md).
 
 ## Validation status
