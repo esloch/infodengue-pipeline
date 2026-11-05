@@ -52,16 +52,31 @@ class AnalysisJobService:
         cores: int,
         load: bool,
         output_root: Path,
+        initial_analysis_week: Epiweek | None = None,
     ) -> None:
         self._sessions = sessions
         self._worker_image = worker_image
         self._cores = cores
         self._load = load
         self._output_root = output_root.resolve()
+        self._initial_analysis_week = initial_analysis_week
+
+    def _candidate_week(
+        self, session: Session, coverage: Coverage
+    ) -> Epiweek | None:
+        """Return the next unpersisted week from explicit initialization."""
+        if self._initial_analysis_week is None:
+            return None
+        last = SqlWorkflowRepository(session).last_persisted_analysis_week(
+            coverage, self._initial_analysis_week
+        )
+        return last.next() if last is not None else self._initial_analysis_week
 
     def claim_ready(self, coverage: Coverage, epiweek: Epiweek) -> UUID | None:
         """Create or reuse one job for the current ready fingerprint."""
         with self._sessions.begin() as session:
+            if self._candidate_week(session, coverage) != epiweek:
+                return None
             snapshot = SqlWorkflowRepository(session).get_for_update(
                 coverage, epiweek
             )
@@ -106,15 +121,22 @@ class AnalysisJobService:
     def retry(self, job_id: UUID) -> bool:
         """Explicitly return only a FAILED job to QUEUED."""
         with self._sessions.begin() as session:
+            job = session.get(AnalysisJobRow, job_id)
+            if job is None or job.status is not AnalysisJobStatus.FAILED:
+                return False
+            workflow = session.get(WorkflowRow, job.workflow_id)
+            if workflow is None:
+                return False
+            if self._candidate_week(
+                session, workflow.coverage
+            ) != Epiweek.parse(workflow.epiweek):
+                return False
             job = session.scalar(
                 select(AnalysisJobRow)
                 .where(AnalysisJobRow.job_id == job_id)
                 .with_for_update()
             )
             if job is None or job.status is not AnalysisJobStatus.FAILED:
-                return False
-            workflow = session.get(WorkflowRow, job.workflow_id)
-            if workflow is None:
                 return False
             snapshot = SqlWorkflowRepository(session).get_for_update(
                 workflow.coverage, Epiweek.parse(workflow.epiweek)
@@ -140,6 +162,19 @@ class AnalysisJobService:
     def execute(self, job_id: UUID, runner: AnalysisRunner) -> bool:
         """Claim a queued job, run it, and persist its terminal state."""
         with self._sessions.begin() as session:
+            job = session.get(AnalysisJobRow, job_id)
+            if job is None or job.status is not AnalysisJobStatus.QUEUED:
+                return False
+            workflow_row = session.get(WorkflowRow, job.workflow_id)
+            if workflow_row is None:
+                job.status = AnalysisJobStatus.FAILED
+                job.last_error = 'workflow record missing'
+                job.finished_at = datetime.now(timezone.utc)
+                return False
+            coverage = workflow_row.coverage
+            epiweek = Epiweek.parse(workflow_row.epiweek)
+            if self._candidate_week(session, coverage) != epiweek:
+                return False
             job = session.scalar(
                 select(AnalysisJobRow)
                 .where(AnalysisJobRow.job_id == job_id)
@@ -153,8 +188,6 @@ class AnalysisJobService:
                 job.last_error = 'workflow record missing'
                 job.finished_at = datetime.now(timezone.utc)
                 return False
-            coverage = workflow_row.coverage
-            epiweek = Epiweek.parse(workflow_row.epiweek)
             snapshot = SqlWorkflowRepository(session).get_for_update(
                 coverage, epiweek
             )
@@ -204,6 +237,10 @@ class AnalysisJobService:
 
         succeeded = result is not None and result.succeeded and not failure
         with self._sessions.begin() as session:
+            if self._initial_analysis_week is not None:
+                SqlWorkflowRepository(session).last_persisted_analysis_week(
+                    coverage, self._initial_analysis_week
+                )
             job = session.scalar(
                 select(AnalysisJobRow)
                 .where(AnalysisJobRow.job_id == job_id)

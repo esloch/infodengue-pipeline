@@ -115,6 +115,29 @@ def test_epiweek_round_trip() -> None:
     assert int(week) == 202639
 
 
+@pytest.mark.parametrize(
+    ('current', 'following'),
+    [(202643, 202644), (202652, 202701)],
+)
+def test_epiweek_next_uses_epidemiological_calendar(
+    current: int, following: int
+) -> None:
+    """Candidate advancement follows epiweek year boundaries."""
+    assert int(Epiweek.parse(current).next()) == following
+
+
+def test_initial_analysis_week_is_explicit_and_validated() -> None:
+    """Initialization accepts a valid configured week, never a guess."""
+    assert (
+        Settings(
+            _env_file=None, analysis_initial_epiweek=202644
+        ).analysis_initial_epiweek
+        == 202644
+    )
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, analysis_initial_epiweek=202653)
+
+
 def test_event_round_trip(completed_event) -> None:
     """The versioned event survives JSON serialization."""
     event = completed_event()

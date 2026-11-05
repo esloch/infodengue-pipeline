@@ -48,8 +48,10 @@ class CoordinateEpiweek:
         uf_required_diseases: frozenset[
             Disease
         ] = DEFAULT_UF_REQUIRED_DISEASES,
+        initial_analysis_week: Epiweek | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
+        self._initial_analysis_week = initial_analysis_week
         self._required_by_coverage = {
             Coverage.BR: frozenset(br_required_diseases),
             **{
@@ -63,48 +65,102 @@ class CoordinateEpiweek:
         ):
             raise ValueError('required diseases must not be empty')
 
-    def record(self, event: IngestionCompleted) -> WorkflowSnapshot:
-        """Apply an ingestion event to one coverage and epiweek."""
-        epiweek = Epiweek.parse(event.epiweek)
-        coverage = event.coverage
+    def record(self, event: IngestionCompleted) -> WorkflowSnapshot | None:
+        """Rebuild readiness from durable deliveries after one completion."""
         with self._unit_of_work() as work:
-            required_diseases = self._required_by_coverage[coverage]
-            current = work.workflows.get_for_update(coverage, epiweek)
-            if current is None:
-                current = WorkflowSnapshot(
-                    workflow_id=uuid4(),
-                    readiness=Readiness(
-                        coverage,
-                        epiweek,
-                        required_diseases=required_diseases,
-                    ),
-                    status=WorkflowStatus.WAITING,
-                )
-            else:
-                current = replace(
-                    current,
-                    readiness=current.readiness.with_required_diseases(
-                        required_diseases
-                    ),
-                )
-            incoming = IngestionInput(
-                event.run_id, event.fingerprint, event.completed_at
-            )
-            readiness = current.readiness.with_input(event.disease, incoming)
-            fingerprint = readiness.input_fingerprint
-            if not readiness.ready:
-                status = WorkflowStatus.WAITING
-            elif fingerprint == current.queued_fingerprint:
-                status = current.status
-            else:
-                status = WorkflowStatus.READY
-            updated = replace(
-                current,
-                readiness=readiness,
-                status=status,
-            )
-            work.workflows.save(updated)
+            work.outbox.add(event)
+            events = work.workflows.completed_ingestions(event.coverage)
+            if all(existing.event_id != event.event_id for existing in events):
+                events.append(event)
+            updated = self._rebuild(work, event.coverage, events)
             work.commit()
+        return updated
+
+    def reconcile_all(self) -> list[WorkflowSnapshot]:
+        """Rebuild each next coverage candidate from durable event history."""
+        if self._initial_analysis_week is None:
+            return []
+        with self._unit_of_work() as work:
+            events = work.workflows.completed_ingestions()
+            snapshots = [
+                snapshot
+                for coverage in sorted(
+                    {event.coverage for event in events},
+                    key=lambda item: item.value,
+                )
+                if (
+                    snapshot := self._rebuild(
+                        work,
+                        coverage,
+                        [
+                            event
+                            for event in events
+                            if event.coverage is coverage
+                        ],
+                    )
+                )
+                is not None
+            ]
+            work.commit()
+        return snapshots
+
+    def _rebuild(
+        self,
+        work: UnitOfWork,
+        coverage: Coverage,
+        events: list[IngestionCompleted],
+    ) -> WorkflowSnapshot | None:
+        """Select current eligible inputs for one contiguous candidate week."""
+        if self._initial_analysis_week is None:
+            return None
+        last_processed = work.workflows.last_persisted_analysis_week(
+            coverage, self._initial_analysis_week
+        )
+        epiweek = (
+            last_processed.next()
+            if last_processed is not None
+            else self._initial_analysis_week
+        )
+        eligible = [
+            event
+            for event in events
+            if event.coverage is coverage
+            and Epiweek.parse(event.epiweek) >= epiweek
+        ]
+        if not eligible:
+            return None
+        required_diseases = self._required_by_coverage[coverage]
+        current = work.workflows.get_for_update(coverage, epiweek)
+        readiness = Readiness(
+            coverage,
+            epiweek,
+            required_diseases=required_diseases,
+        )
+        for event in sorted(
+            eligible,
+            key=lambda item: (item.completed_at, item.run_id.int),
+        ):
+            readiness = readiness.with_input(
+                event.disease,
+                IngestionInput(
+                    event.run_id, event.fingerprint, event.completed_at
+                ),
+            )
+        if current is None:
+            current = WorkflowSnapshot(
+                workflow_id=uuid4(),
+                readiness=readiness,
+                status=WorkflowStatus.WAITING,
+            )
+        fingerprint = readiness.input_fingerprint
+        if not readiness.ready:
+            status = WorkflowStatus.WAITING
+        elif fingerprint == current.queued_fingerprint:
+            status = current.status
+        else:
+            status = WorkflowStatus.READY
+        updated = replace(current, readiness=readiness, status=status)
+        work.workflows.save(updated)
         return updated
 
     def claim_ready(

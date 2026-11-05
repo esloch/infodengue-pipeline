@@ -35,7 +35,7 @@ from infodengue_pipeline.services import (
 )
 from infodengue_pipeline.storage.ingress import IngressCoordinator
 from infodengue_pipeline.storage.minio import build_object_store
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select, update
 
 
 def _analysis_jobs(settings: Settings | None = None) -> AnalysisJobService:
@@ -49,7 +49,46 @@ def _analysis_jobs(settings: Settings | None = None) -> AnalysisJobService:
         cores=config.analysis_cores,
         load=config.analysis_load,
         output_root=config.analysis_output_root,
+        initial_analysis_week=(
+            Epiweek.parse(config.analysis_initial_epiweek)
+            if config.analysis_initial_epiweek is not None
+            else None
+        ),
     )
+
+
+def _coordinator(settings: Settings) -> CoordinateEpiweek:
+    """Build readiness coordination with the configured explicit bootstrap."""
+    return CoordinateEpiweek(
+        unit_of_work,
+        br_required_diseases=settings.br_required_diseases,
+        uf_required_diseases=settings.uf_required_diseases,
+        initial_analysis_week=(
+            Epiweek.parse(settings.analysis_initial_epiweek)
+            if settings.analysis_initial_epiweek is not None
+            else None
+        ),
+    )
+
+
+def _claim_queued_dispatch(job_id: UUID, retry_before: datetime) -> bool:
+    """Atomically claim one queued job before publishing its task message."""
+    now = datetime.now(timezone.utc)
+    with session_factory()() as session, session.begin():
+        claimed = session.scalar(
+            update(AnalysisJobRow)
+            .where(
+                AnalysisJobRow.job_id == job_id,
+                AnalysisJobRow.status == AnalysisJobStatus.QUEUED,
+                or_(
+                    AnalysisJobRow.dispatched_at.is_(None),
+                    AnalysisJobRow.dispatched_at <= retry_before,
+                ),
+            )
+            .values(dispatched_at=now)
+            .returning(AnalysisJobRow.job_id)
+        )
+    return claimed is not None
 
 
 @lru_cache(maxsize=4)
@@ -71,12 +110,8 @@ def ingestion_completed(payload: dict[str, object]) -> str:
     settings = get_settings()
     configure_logging(settings.log_level)
     event = IngestionCompleted.model_validate(payload)
-    workflow = CoordinateEpiweek(
-        unit_of_work,
-        br_required_diseases=settings.br_required_diseases,
-        uf_required_diseases=settings.uf_required_diseases,
-    ).record(event)
-    return workflow.status.value
+    workflow = _coordinator(settings).record(event)
+    return workflow.status.value if workflow is not None else 'uninitialized'
 
 
 @celery_app.task(  # type: ignore[untyped-decorator]
@@ -124,6 +159,21 @@ def dispatch_ready(limit: int = 100) -> int:
     configure_logging(settings.log_level)
     if not settings.analysis_image:
         return 0
+    candidates = {
+        snapshot.readiness.coverage: snapshot.readiness.epiweek
+        for snapshot in _coordinator(settings).reconcile_all()
+    }
+    if not candidates:
+        return 0
+    candidate_filter = or_(
+        *(
+            and_(
+                WorkflowRow.coverage == coverage,
+                WorkflowRow.epiweek == int(epiweek),
+            )
+            for coverage, epiweek in candidates.items()
+        )
+    )
     retry_before = datetime.now(timezone.utc) - timedelta(
         seconds=settings.analysis_dispatch_retry_seconds
     )
@@ -131,15 +181,27 @@ def dispatch_ready(limit: int = 100) -> int:
         workflows = session.scalars(
             select(WorkflowRow)
             .where(WorkflowRow.status == WorkflowStatus.READY)
+            .where(candidate_filter)
             .order_by(WorkflowRow.created_at)
             .limit(limit)
         ).all()
         identities = [
-            (row.coverage, Epiweek.parse(row.epiweek)) for row in workflows
+            (row.coverage, Epiweek.parse(row.epiweek))
+            for row in workflows
+            if candidates.get(row.coverage) == Epiweek.parse(row.epiweek)
         ]
-        queued_job_ids = session.scalars(
-            select(AnalysisJobRow.job_id)
+        queued_jobs = session.execute(
+            select(
+                AnalysisJobRow.job_id,
+                WorkflowRow.coverage,
+                WorkflowRow.epiweek,
+            )
+            .join(
+                WorkflowRow,
+                WorkflowRow.workflow_id == AnalysisJobRow.workflow_id,
+            )
             .where(
+                candidate_filter,
                 AnalysisJobRow.status == AnalysisJobStatus.QUEUED,
                 or_(
                     AnalysisJobRow.dispatched_at.is_(None),
@@ -149,6 +211,9 @@ def dispatch_ready(limit: int = 100) -> int:
             .order_by(AnalysisJobRow.created_at)
             .limit(limit)
         ).all()
+        queued_job_ids = [
+            job_id for job_id, _coverage, _epiweek in queued_jobs
+        ]
     jobs = _analysis_jobs(settings)
     job_ids = set(queued_job_ids)
     for coverage, epiweek in identities:
@@ -157,6 +222,8 @@ def dispatch_ready(limit: int = 100) -> int:
             job_ids.add(job_id)
     dispatched = 0
     for job_id in sorted(job_ids, key=str):
+        if not _claim_queued_dispatch(job_id, retry_before):
+            continue
         celery_app.send_task(
             'pipeline.analysis.run',
             args=[str(job_id)],
@@ -164,10 +231,6 @@ def dispatch_ready(limit: int = 100) -> int:
             routing_key='pipeline.analysis',
             retry=True,
         )
-        with session_factory()() as session, session.begin():
-            job = session.get(AnalysisJobRow, job_id)
-            if job is not None and job.status == AnalysisJobStatus.QUEUED:
-                job.dispatched_at = datetime.now(timezone.utc)
         dispatched += 1
     return dispatched
 

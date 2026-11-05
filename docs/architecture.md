@@ -43,7 +43,7 @@ completed ingestion.run identified by local SHA-256
   ↓
 read-only completion bridge → deterministic event → PostgreSQL outbox
   ↓
-RabbitMQ / Celery → workflow readiness by (coverage, epiweek)
+RabbitMQ / Celery → workflow readiness by (coverage, analysis epiweek)
   ↓
 one persisted analysis_job per current input fingerprint
   ↓
@@ -77,11 +77,24 @@ key make repeated polling idempotent.
 
 ## Workflow identity and readiness
 
-Workflow identity is `(coverage, epiweek)`, so `BR/202639`, `MG/202639`, and
+Workflow identity is `(coverage, analysis_epiweek)`, so `BR/202639`, `MG/202639`, and
 `SP/202639` remain separate. National input requires A90 and A92.0; A928 is
 optional. State input requires A90; A92.0 and A928 are optional. The newest
-per-disease input wins by `(completed_at, run_id)`. Every available supported
-input participates in the fingerprint.
+per-disease completed delivery that reaches the candidate week wins by
+`(completed_at, run_id)`. Its delivery epiweek remains provenance and is not
+used as the analysis week. Every available supported input participates in
+the fingerprint. `INFODENGUE_PIPELINE_ANALYSIS_INITIAL_EPIWEEK` is the first
+eligible analysis week and lower bound for the persisted cursor. The candidate
+is the week after the latest contiguous `SUCCEEDED` `analysis_job` with
+`load=true` at or after that week. Without this explicit initialization,
+completions are recorded in the outbox but do not create workflows. The next
+week uses epidemiological calendar arithmetic. The cursor advances only across
+contiguous weeks whose successful job fingerprint still matches a succeeded
+workflow. The periodic dispatcher rebuilds the next candidate from retained
+completion events, so one delivery can support consecutive weeks without a
+new ingestion event. For each disease it selects the greatest
+`(completed_at, run_id)` among deliveries whose delivery epiweek reaches the
+candidate.
 
 AlertaDengue now preserves canonical CID-10 values in completed run metadata.
 The completion bridge rejects ambiguous legacy `A92` values.
