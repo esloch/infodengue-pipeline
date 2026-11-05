@@ -115,12 +115,102 @@ def test_old_job_completion_does_not_replace_newer_ready_fingerprint(
         }
     )
     CoordinateEpiweek(work_factory).record(newer)
-    assert service.execute(job_id, FakeRunner())
+    stale_runner = FakeRunner()
+    assert not service.execute(job_id, stale_runner)
+    assert stale_runner.requests == []
+    with sessions() as session:
+        job = session.get(AnalysisJobRow, job_id)
+        assert job is not None
+        assert job.status is AnalysisJobStatus.FAILED
+        assert job.attempts == 0
+        assert job.last_error == 'analysis job input fingerprint is stale'
     with sessions() as session:
         workflow = session.scalar(select(WorkflowRow))
         assert workflow is not None
         assert workflow.status is WorkflowStatus.READY
         assert workflow.queued_fingerprint != 'newer-input'
+
+
+def test_stale_failed_retry_preserves_job_state_and_artifacts(
+    sessions, work_factory, completed_event, tmp_path: Path
+) -> None:
+    """A stale failed job remains untouched and cannot reuse old inputs."""
+    ready_workflow(work_factory, completed_event)
+    original_service = AnalysisJobService(
+        sessions,
+        worker_image='analysis:test',
+        cores=1,
+        load=True,
+        output_root=tmp_path,
+    )
+    job_id = original_service.claim_ready(Coverage.BR, Epiweek.parse(202639))
+    assert job_id is not None
+    failed_runner = FakeRunner(False)
+    assert not original_service.execute(job_id, failed_runner)
+    failed_request = failed_runner.requests[0]
+    failed_request.output_dir.mkdir(parents=True)
+    marker = failed_request.output_dir / 'failed-attempt.txt'
+    marker.write_text('preserve', encoding='utf-8')
+
+    with sessions() as session:
+        job = session.get(AnalysisJobRow, job_id)
+        assert job is not None
+        old_fingerprint = job.input_fingerprint
+        old_workflow_id = job.workflow_id
+        before = (
+            job.status,
+            job.cores,
+            job.attempts,
+            job.started_at,
+            job.finished_at,
+            job.exit_code,
+            job.last_error,
+            job.dispatched_at,
+            job.output_dir,
+            job.load,
+        )
+
+    old_event = completed_event(Disease.DENGUE)
+    newer = old_event.model_copy(
+        update={
+            'run_id': uuid4(),
+            'event_id': uuid4(),
+            'fingerprint': 'newer-input',
+            'completed_at': datetime.now(timezone.utc).replace(
+                year=2027, month=1, day=1
+            ),
+        }
+    )
+    CoordinateEpiweek(work_factory).record(newer)
+    retry_service = AnalysisJobService(
+        sessions,
+        worker_image='analysis:new',
+        cores=8,
+        load=False,
+        output_root=tmp_path,
+    )
+    assert not retry_service.retry(job_id)
+
+    with sessions() as session:
+        job = session.get(AnalysisJobRow, job_id)
+        workflow = session.get(WorkflowRow, old_workflow_id)
+        assert job is not None
+        assert workflow is not None
+        assert (
+            job.status,
+            job.cores,
+            job.attempts,
+            job.started_at,
+            job.finished_at,
+            job.exit_code,
+            job.last_error,
+            job.dispatched_at,
+            job.output_dir,
+            job.load,
+        ) == before
+        assert job.input_fingerprint == old_fingerprint
+        assert workflow.status is WorkflowStatus.READY
+        assert marker.read_text(encoding='utf-8') == 'preserve'
 
 
 def test_failed_retry_refreshes_cores_and_preserves_job_and_attempt(
