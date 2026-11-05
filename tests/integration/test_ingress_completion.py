@@ -667,9 +667,10 @@ def test_bridge_uses_canonical_disease_for_coarse_a92(
         assert event is not None
         assert event.payload['disease'] == expected_disease
         assert event.payload['fingerprint'] == digest
-    workflow = CoordinateEpiweek(lambda: SqlUnitOfWork(sessions)).record(
-        IngestionCompleted.model_validate(event.payload)
-    )
+    workflow = CoordinateEpiweek(
+        lambda: SqlUnitOfWork(sessions),
+        initial_analysis_week=Epiweek.parse(202639),
+    ).record(IngestionCompleted.model_validate(event.payload))
     with sessions() as session:
         input_row = session.scalar(
             select(WorkflowInputRow).where(
@@ -710,7 +711,10 @@ def test_automated_orchestration_e2e(sessions, tmp_path: Path) -> None:
         ).execute()
         == 1
     )
-    coordinator = CoordinateEpiweek(lambda: SqlUnitOfWork(sessions))
+    coordinator = CoordinateEpiweek(
+        lambda: SqlUnitOfWork(sessions),
+        initial_analysis_week=Epiweek.parse(202639),
+    )
     workflow = coordinator.record(publisher.events[0])
     assert workflow.status is WorkflowStatus.READY
     job_service = AnalysisJobService(
@@ -719,6 +723,7 @@ def test_automated_orchestration_e2e(sessions, tmp_path: Path) -> None:
         cores=1,
         load=False,
         output_root=tmp_path / 'analysis',
+        initial_analysis_week=Epiweek.parse(202639),
     )
     job_id = job_service.claim_ready(Coverage.MG, Epiweek.parse(202639))
     assert job_id is not None

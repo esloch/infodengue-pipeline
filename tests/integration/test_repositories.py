@@ -86,7 +86,9 @@ def test_epiweek_readiness_and_idempotent_claim(
     sessions: sessionmaker[Session], work_factory, completed_event
 ) -> None:
     """A90 and A92 of one week are required before one claim succeeds."""
-    coordinator = CoordinateEpiweek(work_factory)
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639)
+    )
     dengue = completed_event(Disease.DENGUE)
     chik = completed_event(Disease.CHIKUNGUNYA)
     waiting = coordinator.record(dengue)
@@ -150,7 +152,9 @@ def test_configurable_disease_readiness(
         if required_diseases is not None
         else {}
     )
-    coordinator = CoordinateEpiweek(work_factory, **kwargs)
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639), **kwargs
+    )
     snapshot = None
     for disease in diseases:
         snapshot = coordinator.record(
@@ -169,7 +173,9 @@ def test_repeated_same_disease_event_remains_one_input(
     sessions: sessionmaker[Session], work_factory, completed_event
 ) -> None:
     """Repeated delivery does not duplicate a disease input row."""
-    coordinator = CoordinateEpiweek(work_factory)
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639)
+    )
     event = completed_event(Disease.ZIKA)
     first = coordinator.record(event)
     second = coordinator.record(event)
@@ -214,20 +220,33 @@ def test_workflow_input_rejects_duplicate_disease(
             session.commit()
 
 
-def test_different_epiweeks_never_combine(
+def test_delivery_below_analysis_candidate_does_not_feed_workflow(
     work_factory, completed_event
 ) -> None:
-    """A90 and A92 from different weeks remain independently waiting."""
-    coordinator = CoordinateEpiweek(work_factory)
+    """A delivery below the selected candidate is not a workflow input."""
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639)
+    )
     assert coordinator.record(completed_event(Disease.DENGUE)).status is (
         WorkflowStatus.WAITING
     )
-    assert (
-        coordinator.record(
-            completed_event(Disease.CHIKUNGUNYA, week=202638)
-        ).status
-        is WorkflowStatus.WAITING
+    stale_delivery = coordinator.record(
+        completed_event(Disease.CHIKUNGUNYA, week=202638)
     )
+    assert stale_delivery is not None
+    assert stale_delivery.status is WorkflowStatus.WAITING
+    assert stale_delivery.readiness.received_diseases == frozenset(
+        {Disease.DENGUE}
+    )
+
+
+def test_missing_initial_week_keeps_completion_unassigned(
+    work_factory, completed_event
+) -> None:
+    """No inferred bootstrap means no analysis workflow is created."""
+    coordinator = CoordinateEpiweek(work_factory)
+    assert coordinator.record(completed_event()) is None
+    assert coordinator.reconcile_all() == []
     assert coordinator.claim_ready(Coverage.BR, Epiweek.parse(202639)) is None
     assert coordinator.claim_ready(Coverage.BR, Epiweek.parse(202638)) is None
 
@@ -236,7 +255,9 @@ def test_new_input_fingerprint_reopens_readiness(
     work_factory, completed_event
 ) -> None:
     """A new ingestion identity can cause a new analysis claim."""
-    coordinator = CoordinateEpiweek(work_factory)
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639)
+    )
     dengue = completed_event(Disease.DENGUE)
     coordinator.record(dengue)
     coordinator.record(completed_event(Disease.CHIKUNGUNYA))
@@ -259,7 +280,9 @@ def test_stale_event_does_not_reopen_queued_or_regress_ready(
     work_factory, completed_event
 ) -> None:
     """Delayed older inputs cannot replace a newer queued or ready input."""
-    coordinator = CoordinateEpiweek(work_factory)
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639)
+    )
     old = completed_event(
         Disease.DENGUE,
         completed_at=datetime(2026, 10, 13, tzinfo=timezone.utc),
@@ -292,7 +315,9 @@ def test_coverage_and_epiweek_form_distinct_workflow_identity(
     sessions: sessionmaker[Session], work_factory, completed_event
 ) -> None:
     """Same week deliveries remain separated by national and state coverage."""
-    coordinator = CoordinateEpiweek(work_factory)
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639)
+    )
     mg_dengue = coordinator.record(
         completed_event(Disease.DENGUE, coverage=Coverage.MG)
     )
@@ -312,7 +337,9 @@ def test_coverage_and_epiweek_form_distinct_workflow_identity(
 
 def test_different_ufs_never_combine(work_factory, completed_event) -> None:
     """MG dengue cannot combine with SP chikungunya."""
-    coordinator = CoordinateEpiweek(work_factory)
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639)
+    )
     mg = coordinator.record(
         completed_event(Disease.DENGUE, coverage=Coverage.MG)
     )
@@ -326,7 +353,9 @@ def test_different_ufs_never_combine(work_factory, completed_event) -> None:
 
 def test_mg_chikungunya_alone_waits(work_factory, completed_event) -> None:
     """State chikungunya is optional and cannot satisfy dengue readiness."""
-    coordinator = CoordinateEpiweek(work_factory)
+    coordinator = CoordinateEpiweek(
+        work_factory, initial_analysis_week=Epiweek.parse(202639)
+    )
     state_chik = coordinator.record(
         completed_event(Disease.CHIKUNGUNYA, coverage=Coverage.MG)
     )

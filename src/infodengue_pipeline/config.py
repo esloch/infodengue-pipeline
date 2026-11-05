@@ -11,6 +11,7 @@ from infodengue_pipeline.models import (
     DEFAULT_BR_REQUIRED_DISEASES,
     DEFAULT_UF_REQUIRED_DISEASES,
     Disease,
+    Epiweek,
     disease_from_cid10,
 )
 
@@ -45,6 +46,7 @@ class Settings(BaseSettings):
     analysis_output_root: Path = Path('.local/analysis-output')
     analysis_cores: int = Field(default=1, ge=1, le=64)
     analysis_load: bool = False
+    analysis_initial_epiweek: int | None = None
     analysis_timeout_seconds: int = Field(default=21600, ge=1)
     analysis_load_lock_timeout_seconds: int = Field(default=900, ge=1)
     minio_poll_seconds: int = Field(default=60, ge=1)
@@ -94,6 +96,16 @@ class Settings(BaseSettings):
         """Reject empty or path-shaped bucket identifiers."""
         if not value or '/' in value or '..' in value:
             raise ValueError('minio_bucket must be a simple bucket name')
+        return value
+
+    @field_validator('analysis_initial_epiweek')
+    @classmethod
+    def validate_analysis_initial_epiweek(
+        cls, value: int | None
+    ) -> int | None:
+        """Validate the explicit first scientific week for a new cursor."""
+        if value is not None:
+            return int(Epiweek.parse(value))
         return value
 
 

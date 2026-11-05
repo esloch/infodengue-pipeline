@@ -25,6 +25,26 @@ installed pipeline package and runs Makim as a child process. The scientific
 Keep `INFODENGUE_PIPELINE_ANALYSIS_LOAD=false` unless a mutating analysis is
 explicitly approved and serialized for its database target.
 
+Set `INFODENGUE_PIPELINE_ANALYSIS_INITIAL_EPIWEEK` explicitly to the first
+eligible scientific week. Choose a week operators have verified is pending;
+the pipeline does not infer or backfill historical weeks. Set the same value
+in the core worker environment file used by `worker-events` and
+`worker-orchestration`, and in the analysis worker environment file used by
+`worker-analysis`. A mismatch causes the analysis worker to leave dispatched
+jobs queued because its candidate does not match the coordinator's week.
+After a successful `load=true` job, the next candidate is its following
+epidemiological week. A successful `load=false` job generates artifacts but
+does not advance this persisted-data cursor. Delivery completions can satisfy
+the candidate only when their delivery epiweek is at least the candidate. The
+periodic analysis dispatcher reevaluates retained completion events after each
+successful job, allowing it to proceed through multiple pending weeks from
+one delivery.
+
+Do not purge published `pipeline.outbox_event` rows. Reconciliation replays
+published completion payloads to select inputs for later analysis weeks. The
+repository has no outbox cleanup task; external deletion would make those
+deliveries unavailable for future candidate readiness and input fingerprints.
+
 ## Guarded real staging E2E
 
 This section covers the staging E2E flow. The separate
@@ -140,6 +160,10 @@ before any explicit retry. This is particularly important for any explicit
 lock scoped to the target database for the full scientific process, waiting
 at most `INFODENGUE_PIPELINE_ANALYSIS_LOAD_LOCK_TIMEOUT_SECONDS` (default 900
 seconds). Read-only `load=false` jobs do not acquire this lock.
+
+The contiguous cursor remains at a failed candidate, so an explicit retry
+reuses that candidate's week and current input fingerprint. Retrying requires
+the same configured initial week in both worker environment files.
 
 Inspect structured logs using `object_id`, `sha256`, `run_id`, `event_id`,
 `coverage`, `epiweek`, `input_fingerprint`, and `job_id`. Secrets and database

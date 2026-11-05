@@ -11,6 +11,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from infodengue_pipeline.db.models import (
+    AnalysisJobRow,
     OutboxEventRow,
     OutboxStatus,
     WorkflowInputRow,
@@ -18,11 +19,13 @@ from infodengue_pipeline.db.models import (
 )
 from infodengue_pipeline.events import IngestionCompleted
 from infodengue_pipeline.models import (
+    AnalysisJobStatus,
     Coverage,
     Epiweek,
     IngestionInput,
     Readiness,
     WorkflowSnapshot,
+    WorkflowStatus,
 )
 
 
@@ -31,6 +34,62 @@ class SqlWorkflowRepository:
 
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def last_persisted_analysis_week(
+        self, coverage: Coverage, initial_week: Epiweek
+    ) -> Epiweek | None:
+        """Return the contiguous cursor backed by current successful jobs."""
+        if self._session.bind is not None and (
+            self._session.bind.dialect.name == 'postgresql'
+        ):
+            lock_key = int.from_bytes(
+                hashlib.sha256(
+                    f'analysis-cursor:{coverage.value}'.encode()
+                ).digest()[:8],
+                'big',
+                signed=True,
+            )
+            self._session.execute(select(func.pg_advisory_xact_lock(lock_key)))
+        weeks = self._session.scalars(
+            select(WorkflowRow.epiweek)
+            .join(
+                AnalysisJobRow,
+                AnalysisJobRow.workflow_id == WorkflowRow.workflow_id,
+            )
+            .where(
+                WorkflowRow.coverage == coverage,
+                WorkflowRow.status == WorkflowStatus.SUCCEEDED,
+                AnalysisJobRow.input_fingerprint
+                == WorkflowRow.queued_fingerprint,
+                AnalysisJobRow.status == AnalysisJobStatus.SUCCEEDED,
+                AnalysisJobRow.load.is_(True),
+            )
+        ).all()
+        completed = set(weeks)
+        cursor: Epiweek | None = None
+        candidate = initial_week
+        while int(candidate) in completed:
+            cursor = candidate
+            candidate = candidate.next()
+        return cursor
+
+    def completed_ingestions(
+        self, coverage: Coverage | None = None
+    ) -> list[IngestionCompleted]:
+        """Read completed deliveries from the retained versioned outbox."""
+        rows = self._session.scalars(
+            select(OutboxEventRow)
+            .where(OutboxEventRow.event_type == 'sinan.ingestion.completed')
+            .order_by(OutboxEventRow.created_at, OutboxEventRow.event_id)
+        ).all()
+        events = [
+            IngestionCompleted.model_validate(row.payload) for row in rows
+        ]
+        return [
+            event
+            for event in events
+            if coverage is None or event.coverage is coverage
+        ]
 
     def get_for_update(
         self, coverage: Coverage, epiweek: Epiweek

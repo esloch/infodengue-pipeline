@@ -62,6 +62,18 @@ class WorkflowRepository(Protocol):
         """Insert or update one coverage and epiweek state."""
         ...
 
+    def last_persisted_analysis_week(
+        self, coverage: Coverage, initial_week: Epiweek
+    ) -> Epiweek | None:
+        """Return latest contiguous persisted week from explicit bootstrap."""
+        ...
+
+    def completed_ingestions(
+        self, coverage: Coverage | None = None
+    ) -> list[IngestionCompleted]:
+        """Replay durable completed delivery events."""
+        ...
+
 
 class OutboxRepository(Protocol):
     """Transactional event outbox persistence."""

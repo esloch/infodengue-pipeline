@@ -67,6 +67,7 @@ def test_postgres_claim_creates_one_job_under_concurrent_calls(
         cores=1,
         load=False,
         output_root=tmp_path,
+        initial_analysis_week=epiweek,
     )
     barrier = Barrier(2)
 

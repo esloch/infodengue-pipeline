@@ -4,7 +4,7 @@ import hashlib
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
@@ -129,6 +129,13 @@ class Epiweek:
     def __str__(self) -> str:
         """Return the stable six digit string representation."""
         return f'{self.year:04d}{self.week:02d}'
+
+    def next(self) -> 'Epiweek':
+        """Return the next week using the epidemiological calendar."""
+        following = Week.fromdate(
+            Week(self.year, self.week).startdate() + timedelta(days=7)
+        )
+        return Epiweek(following.year, following.week)
 
 
 @dataclass(frozen=True)
