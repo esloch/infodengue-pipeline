@@ -130,10 +130,13 @@ newer per-disease inputs when delayed events arrive.
 
 Analysis jobs with status `FAILED` can be explicitly retried using the
 `pipeline.analysis.retry` Celery task with the stable job UUID. The same
-logical job is reused. Do not reset jobs that remain `RUNNING` after worker
-loss automatically; inspect the output directory and database effects first,
-then make an operator decision. This is particularly important for any
-explicit `load=true` execution. Mutating analyses hold a PostgreSQL advisory
+logical job is reused, and the retry uses the currently configured
+`analysis_cores` value. Each retry writes to a new attempt output directory;
+earlier attempt artifacts remain available. A retry does not resume an
+interrupted `RUNNING` job or automatically recover a lost worker. Inspect the
+output directory and database effects first, then make an operator decision
+before any explicit retry. This is particularly important for any explicit
+`load=true` execution. Mutating analyses hold a PostgreSQL advisory
 lock scoped to the target database for the full scientific process, waiting
 at most `INFODENGUE_PIPELINE_ANALYSIS_LOAD_LOCK_TIMEOUT_SECONDS` (default 900
 seconds). Read-only `load=false` jobs do not acquire this lock.

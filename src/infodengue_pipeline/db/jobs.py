@@ -113,6 +113,7 @@ class AnalysisJobService:
             )
             if job is None or job.status is not AnalysisJobStatus.FAILED:
                 return False
+            job.cores = self._cores
             job.status = AnalysisJobStatus.QUEUED
             job.started_at = None
             job.finished_at = None
