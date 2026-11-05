@@ -113,6 +113,17 @@ class AnalysisJobService:
             )
             if job is None or job.status is not AnalysisJobStatus.FAILED:
                 return False
+            workflow = session.get(WorkflowRow, job.workflow_id)
+            if workflow is None:
+                return False
+            snapshot = SqlWorkflowRepository(session).get_for_update(
+                workflow.coverage, Epiweek.parse(workflow.epiweek)
+            )
+            if not _job_matches_current_workflow(
+                workflow, snapshot, job.input_fingerprint
+            ):
+                return False
+            job.cores = self._cores
             job.status = AnalysisJobStatus.QUEUED
             job.started_at = None
             job.finished_at = None
@@ -122,18 +133,8 @@ class AnalysisJobService:
             job.output_dir = str(
                 self._output_root / str(job_id) / f'attempt-{job.attempts + 1}'
             )
-            workflow = session.get(WorkflowRow, job.workflow_id)
-            if workflow is not None:
-                snapshot = SqlWorkflowRepository(session).get_for_update(
-                    workflow.coverage, Epiweek.parse(workflow.epiweek)
-                )
-                if (
-                    snapshot is not None
-                    and snapshot.readiness.input_fingerprint
-                    == job.input_fingerprint
-                ):
-                    workflow.status = WorkflowStatus.QUEUED
-                    workflow.queued_fingerprint = job.input_fingerprint
+            workflow.status = WorkflowStatus.QUEUED
+            workflow.queued_fingerprint = job.input_fingerprint
             return True
 
     def execute(self, job_id: UUID, runner: AnalysisRunner) -> bool:
@@ -152,6 +153,19 @@ class AnalysisJobService:
                 job.last_error = 'workflow record missing'
                 job.finished_at = datetime.now(timezone.utc)
                 return False
+            coverage = workflow_row.coverage
+            epiweek = Epiweek.parse(workflow_row.epiweek)
+            snapshot = SqlWorkflowRepository(session).get_for_update(
+                coverage, epiweek
+            )
+            if not _job_matches_current_workflow(
+                workflow_row, snapshot, job.input_fingerprint
+            ):
+                job.status = AnalysisJobStatus.FAILED
+                job.finished_at = datetime.now(timezone.utc)
+                job.exit_code = 1
+                job.last_error = 'analysis job input fingerprint is stale'
+                return False
             job.status = AnalysisJobStatus.RUNNING
             job.started_at = datetime.now(timezone.utc)
             job.attempts += 1
@@ -167,16 +181,8 @@ class AnalysisJobService:
                 workflow_id=job.workflow_id,
             )
             workflow_row_id = workflow_row.workflow_id
-            coverage = workflow_row.coverage
-            epiweek = Epiweek.parse(workflow_row.epiweek)
             fingerprint = job.input_fingerprint
-            snapshot = SqlWorkflowRepository(session).get_for_update(
-                coverage, epiweek
-            )
-            if snapshot is not None and _job_matches_current_workflow(
-                workflow_row, snapshot, fingerprint
-            ):
-                workflow_row.status = WorkflowStatus.RUNNING
+            workflow_row.status = WorkflowStatus.RUNNING
             logger.info(
                 'analysis_job_claimed',
                 job_id=str(job.job_id),
