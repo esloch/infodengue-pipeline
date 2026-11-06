@@ -75,6 +75,46 @@ the AlertaDengue application. Only `status=completed` creates an
 `IngestionCompleted` event. The deterministic event UUID and outbox primary
 key make repeated polling idempotent.
 
+## Runtime components and task registration
+
+`messaging/celery.py` creates a standalone Celery application and explicitly
+declares four durable direct-exchange queues. `workers/tasks.py` contains thin
+Celery adapters: it validates payloads, loads settings, constructs services,
+and passes stable identities to the application and infrastructure layers.
+Business decisions and persistence do not belong in task functions.
+
+| Registered task | Queue | Responsibility |
+|---|---|---|
+| `pipeline.health.ping` | `pipeline.orchestration` | Development worker health response. |
+| `pipeline.ingestion.scan` | `pipeline.ingestion` | Discover and atomically materialize MinIO objects. |
+| `pipeline.events.bridge_completed` | `pipeline.events` | Poll completed AlertaDengue runs into the outbox. |
+| `pipeline.events.ingestion_completed` | `pipeline.events` | Validate an event and rebuild workflow readiness. |
+| `pipeline.events.publish_pending` | `pipeline.events` | Publish pending outbox events with broker confirmation. |
+| `pipeline.analysis.dispatch_ready` | `pipeline.orchestration` | Reconcile candidate weeks, create durable jobs, and dispatch job IDs. |
+| `pipeline.analysis.run` | `pipeline.analysis` | Atomically claim and execute one analysis job. |
+| `pipeline.analysis.retry` | `pipeline.analysis` | Explicitly requeue a failed job. |
+
+Celery Beat schedules `pipeline.ingestion.scan` using
+`INFODENGUE_PIPELINE_MINIO_POLL_SECONDS` (60 seconds by default),
+`pipeline.events.bridge_completed` using
+`INFODENGUE_PIPELINE_BRIDGE_POLL_SECONDS` (30 seconds),
+`pipeline.events.publish_pending` using
+`INFODENGUE_PIPELINE_OUTBOX_POLL_SECONDS` (15 seconds), and
+`pipeline.analysis.dispatch_ready` using
+`INFODENGUE_PIPELINE_ANALYSIS_POLL_SECONDS` (10 seconds). The independent
+`INFODENGUE_PIPELINE_ANALYSIS_DISPATCH_RETRY_SECONDS` (60 seconds) controls
+how soon an undispatched queued job may be sent again after broker trouble.
+Beat creates periodic messages; workers consume them. Compose runs Beat as a
+separate service and expects one active Beat scheduler for a deployment.
+
+Adding a task requires more than a decorator: define a finite use case behind
+the existing Protocol or service boundary, persist any durable lifecycle and
+idempotency key, register and route the task explicitly, add a Beat entry only
+if periodic reconciliation is required, and give the correct worker its
+dependencies. Cover application behavior at the service/repository boundary
+and keep the task adapter small. A Celery registration alone does not provide
+durable job state, readiness, deduplication, recovery, or retry policy.
+
 ## Workflow identity and readiness
 
 Workflow identity is `(coverage, analysis_epiweek)`, so `BR/202639`, `MG/202639`, and

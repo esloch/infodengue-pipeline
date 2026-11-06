@@ -13,6 +13,10 @@ nav:
   - Production: production.md
   - Migration: migration.md
   - Future workloads: future-workloads.md
+  - Validation records:
+      - Issue 9 staging rehearsal: issue9-staging-rehearsal.md
+      - Issue 17 staging acceptance: issue17-staging-acceptance.md
+      - Issue 10 production-profile load rehearsal: issue10-production-profile-load-rehearsal.md
 theme:
 
   name: material
