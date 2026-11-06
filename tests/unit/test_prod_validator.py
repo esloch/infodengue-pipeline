@@ -290,7 +290,9 @@ def test_host_main_runs_only_inspection_commands(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The host orchestrator never starts services or executes migrations."""
-    (tmp_path / '.env.prod').touch()
+    env_dir = tmp_path / '.envs'
+    env_dir.mkdir()
+    (env_dir / '.env.prod').touch()
     monkeypatch.chdir(tmp_path)
     image = _IMAGE
     config = {

@@ -1,5 +1,5 @@
 backend: compose
-env-file: .env.example
+env-file: .envs/.env.example
 
 defaults:
   profile: ${{ env.SUGAR_PROFILE }}
@@ -8,7 +8,7 @@ defaults:
 profiles:
   dev:
     project-name: infodengue-pipeline-dev
-    env-file: .env.example
+    env-file: .envs/.env.example
     config-path: containers/compose.yaml
     services:
       default:
@@ -30,14 +30,14 @@ profiles:
 
   staging:
     project-name: infodengue-pipeline-staging-contract
-    env-file: .env.example
+    env-file: .envs/.env.example
     config-path: containers/compose-contract.yaml
     services:
       available: []
 
   prod:
     project-name: infodengue-pipeline-prod-contract
-    env-file: .env.example
+    env-file: .envs/.env.example
     config-path: containers/compose-contract.yaml
     services:
       available: []

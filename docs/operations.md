@@ -3,7 +3,7 @@
 ## Local services and workers
 
 Local PostgreSQL, RabbitMQ, and MinIO use development-only credentials from
-`.env.example`:
+`.envs/.env.example`:
 
 ```sh
 uv run makim containers.up
@@ -17,6 +17,31 @@ four queues remain separate: `pipeline.ingestion`, `pipeline.events`,
 
 The production-profile foreground SINAN watcher is supervised by the systemd
 user service described in [production](production.md#sinan-watcher-supervision).
+
+For an existing staging host, create `.envs/` and copy the private root files
+without overwriting anything:
+
+```sh
+mkdir -p .envs
+cp -pn .env.staging .envs/.env.staging
+cp -pn .env.staging.analysis .envs/.env.staging.analysis
+cp -pn .env.staging.e2e .envs/.env.staging.e2e
+chmod 600 .envs/.env.staging .envs/.env.staging.analysis \
+  .envs/.env.staging.e2e
+```
+
+Update the three `PIPELINE_*_ENV_FILE` values in `.envs/.env.staging` to
+`../.envs/.env.staging`, `../.envs/.env.staging.analysis`, and
+`../.envs/.env.staging.e2e`. Validate from the repository root with:
+
+```sh
+docker compose --env-file .envs/.env.staging \
+  -f containers/compose-staging.yaml config --quiet
+```
+
+Keep the existing root files until the operator has confirmed the
+configuration and their backup policy permits removal. This is a file-path
+migration only; it does not require restarting services.
 
 Compose starts `worker-analysis` on `pipeline.analysis` with Celery
 concurrency one. Its image extends the AlertaDengueAnalise image with the
@@ -56,9 +81,10 @@ runner or validator.
 queue workers, Beat, the external staging integration network, the shared
 incoming bind mount, and shared analysis artifacts. It connects to the
 existing AlertaDengue MinIO service on that network; it does not mount sibling
-source trees or a Docker socket. Populate private `.env.staging` and
-`.env.staging.analysis` files from the tracked templates. Provision a private
-`.env.staging.e2e` from its template for one-shot fixture submissions. Only
+source trees or a Docker socket. Populate private `.envs/.env.staging` and
+`.envs/.env.staging.analysis` files from the tracked templates. Provision a
+private `.envs/.env.staging.e2e` from its template for one-shot fixture
+submissions. Only
 `worker-analysis` receives `PIPELINE_ANALYSIS_ENV_FILE` and the analysis DB
 credential `INFODENGUE_PIPELINE_ANALYSIS_DATABASE_URL`. The core file contains
 the read-only `INFODENGUE_PIPELINE_ALERTA_SOURCE_DATABASE_URL`.

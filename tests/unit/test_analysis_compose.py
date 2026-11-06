@@ -1,6 +1,7 @@
 """Static assertions for deployment topology and privilege boundaries."""
 
 import re
+import subprocess
 
 from pathlib import Path
 
@@ -52,8 +53,8 @@ def test_development_worker_network_and_output_mount() -> None:
 def test_staging_worker_env_and_output_mounts_are_isolated() -> None:
     """Only analysis gets its private env file and artifact directory."""
     analysis = _service_section('compose-staging.yaml', 'worker-analysis')
-    core = Path('.env.staging.example').read_text()
-    analysis_env = Path('.env.staging.analysis.example').read_text()
+    core = Path('.envs/.env.staging.example').read_text()
+    analysis_env = Path('.envs/.env.staging.analysis.example').read_text()
     validator = _service_section('compose-staging.yaml', 'validator')
     orchestration = _service_section(
         'compose-staging.yaml', 'worker-orchestration'
@@ -118,18 +119,45 @@ def test_staging_worker_env_and_output_mounts_are_isolated() -> None:
 
 def test_staging_env_file_template_and_ci_paths_are_distinct() -> None:
     """Copied operator config uses private files while CI renders templates."""
-    template = Path('.env.staging.example').read_text()
+    template = Path('.envs/.env.staging.example').read_text()
     compose = Path('containers/compose-staging.yaml').read_text()
     makim = Path('.makim.yaml').read_text()
 
-    assert 'PIPELINE_WORKER_ENV_FILE=../.env.staging\n' in template
-    assert 'PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis\n' in template
-    assert '${PIPELINE_WORKER_ENV_FILE:-../.env.staging}' in compose
-    assert '${PIPELINE_ANALYSIS_ENV_FILE:-../.env.staging.analysis}' in compose
-    assert 'env PIPELINE_WORKER_ENV_FILE=../.env.staging.example' in makim
+    assert 'PIPELINE_WORKER_ENV_FILE=../.envs/.env.staging\n' in template
     assert (
-        'PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis.example' in makim
+        'PIPELINE_ANALYSIS_ENV_FILE=../.envs/.env.staging.analysis\n'
+        in template
     )
+    assert '${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.staging}' in compose
+    assert (
+        '${PIPELINE_ANALYSIS_ENV_FILE:-../.envs/.env.staging.analysis}'
+        in compose
+    )
+    assert (
+        'env PIPELINE_WORKER_ENV_FILE=../.envs/.env.staging.example' in makim
+    )
+    assert (
+        'PIPELINE_ANALYSIS_ENV_FILE=../.envs/.env.staging.analysis.example'
+        in makim
+    )
+
+
+def test_env_directory_ignores_private_files_but_tracks_templates() -> None:
+    """Private env files stay ignored while templates remain visible to Git."""
+    private = subprocess.run(
+        ['git', 'check-ignore', '--no-index', '.envs/.env.staging'],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    example = subprocess.run(
+        ['git', 'check-ignore', '--no-index', '.envs/.env.staging.example'],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert private.returncode == 0
+    assert example.returncode == 1
 
 
 def test_staging_e2e_writer_is_confined_to_finite_runner() -> None:
@@ -153,11 +181,11 @@ def test_staging_e2e_writer_is_confined_to_finite_runner() -> None:
         assert 'PIPELINE_E2E_ENV_FILE' not in _service_section(
             'compose-staging.yaml', name
         )
-    template = Path('.env.staging.e2e.example').read_text()
+    template = Path('.envs/.env.staging.e2e.example').read_text()
     assert 'STAGING_E2E_MINIO_ACCESS_KEY=' in template
     assert 'STAGING_E2E_MINIO_SECRET_KEY=' in template
     assert (
-        'PIPELINE_E2E_ENV_FILE=../.env.staging.e2e.example'
+        'PIPELINE_E2E_ENV_FILE=../.envs/.env.staging.e2e.example'
         in Path('.makim.yaml').read_text()
     )
 
@@ -186,14 +214,19 @@ def test_analysis_tasks_route_to_dedicated_queue() -> None:
 
 
 @pytest.mark.parametrize(
-    'example', ['.env.example', '.env.staging.example', '.env.prod.example']
+    'example',
+    [
+        '.envs/.env.example',
+        '.envs/.env.staging.example',
+        '.envs/.env.prod.example',
+    ],
 )
 def test_pipeline_urls_use_unique_network_aliases(example: str) -> None:
     """Multi-network workers reach the pipeline broker and database."""
     values = Path(example).read_text()
     assert '@pipeline-postgres:5432/' in values
     assert '@pipeline-rabbitmq:5672//' in values
-    if example in ('.env.staging.example', '.env.prod.example'):
+    if example in ('.envs/.env.staging.example', '.envs/.env.prod.example'):
         assert '@postgres:5432/dengue' in values
         assert '@alerta-postgres:' not in values
 
@@ -273,10 +306,13 @@ def test_production_worker_env_mounts_and_networks() -> None:
     ingestion = _service_section(compose, 'worker-ingestion')
     orchestration = _service_section(compose, 'worker-orchestration')
     beat = _service_section(compose, 'worker-beat')
-    assert '${PIPELINE_ANALYSIS_ENV_FILE:-../.env.prod.analysis}' in analysis
+    assert (
+        '${PIPELINE_ANALYSIS_ENV_FILE:-../.envs/.env.prod.analysis}'
+        in analysis
+    )
     assert 'PIPELINE_WORKER_ENV_FILE' not in analysis
-    assert '${PIPELINE_WORKER_ENV_FILE:-../.env.prod}' in ingestion
-    assert '${PIPELINE_WORKER_ENV_FILE:-../.env.prod}' in beat
+    assert '${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}' in ingestion
+    assert '${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}' in beat
     assert '${PIPELINE_ANALYSIS_IMAGE:' in analysis
     assert '    build:' not in analysis
     assert '${PROD_SINAN_INCOMING_HOST_PATH:' in ingestion
@@ -305,13 +341,15 @@ def test_production_worker_env_mounts_and_networks() -> None:
 
 def test_production_env_roles_and_immutable_image() -> None:
     """Tracked examples keep source, analysis, and MinIO roles separate."""
-    core = Path('.env.prod.example').read_text()
-    analysis = Path('.env.prod.analysis.example').read_text()
+    core = Path('.envs/.env.prod.example').read_text()
+    analysis = Path('.envs/.env.prod.analysis.example').read_text()
     compose = Path('containers/compose-prod.yaml').read_text()
-    assert 'PIPELINE_WORKER_ENV_FILE=../.env.prod\n' in core
-    assert 'PIPELINE_ANALYSIS_ENV_FILE=../.env.prod.analysis\n' in core
-    assert '${PIPELINE_WORKER_ENV_FILE:-../.env.prod}' in compose
-    assert '${PIPELINE_ANALYSIS_ENV_FILE:-../.env.prod.analysis}' in compose
+    assert 'PIPELINE_WORKER_ENV_FILE=../.envs/.env.prod\n' in core
+    assert 'PIPELINE_ANALYSIS_ENV_FILE=../.envs/.env.prod.analysis\n' in core
+    assert '${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}' in compose
+    assert (
+        '${PIPELINE_ANALYSIS_ENV_FILE:-../.envs/.env.prod.analysis}' in compose
+    )
     assert 'INFODENGUE_PIPELINE_ENVIRONMENT=prod\n' in core
     assert 'INFODENGUE_PIPELINE_ENVIRONMENT=prod\n' in analysis
     assert 'INFODENGUE_PIPELINE_ALERTA_SOURCE_DATABASE_URL=' in core
@@ -349,7 +387,7 @@ def test_production_env_roles_and_immutable_image() -> None:
 def test_production_state_ports_and_integration_network() -> None:
     """The profile isolates durable state and binds host ports to loopback."""
     text = Path('containers/compose-prod.yaml').read_text()
-    core = Path('.env.prod.example').read_text()
+    core = Path('.envs/.env.prod.example').read_text()
     assert 'pipeline_prod_pgdata:/var/lib/postgresql/data' in text
     assert 'pipeline_prod_rabbitmq:/var/lib/rabbitmq' in text
     assert '  pipeline_prod_pgdata:\n' in text

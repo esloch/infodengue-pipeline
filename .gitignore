@@ -147,3 +147,5 @@ cython_debug/
 .env.staging.e2e
 .env.prod
 .env.prod.analysis
+/.envs/*
+!/.envs/*.example

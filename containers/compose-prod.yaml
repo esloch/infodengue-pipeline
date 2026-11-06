@@ -44,7 +44,7 @@ services:
 
   migrate:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.prod}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}
     environment:
       INFODENGUE_PIPELINE_ENVIRONMENT: prod
     command: ["alembic", "upgrade", "head"]
@@ -55,7 +55,7 @@ services:
 
   worker-ingestion:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.prod}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}
     environment:
       INFODENGUE_PIPELINE_ENVIRONMENT: prod
     command:
@@ -90,7 +90,7 @@ services:
 
   worker-events:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.prod}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}
     environment:
       INFODENGUE_PIPELINE_ENVIRONMENT: prod
     command:
@@ -122,7 +122,7 @@ services:
 
   worker-orchestration:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.prod}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}
     environment:
       INFODENGUE_PIPELINE_ENVIRONMENT: prod
       INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
@@ -155,7 +155,7 @@ services:
 
   worker-analysis:
     image: ${PIPELINE_ANALYSIS_IMAGE:?set analysis worker image}
-    env_file: ${PIPELINE_ANALYSIS_ENV_FILE:-../.env.prod.analysis}
+    env_file: ${PIPELINE_ANALYSIS_ENV_FILE:-../.envs/.env.prod.analysis}
     environment:
       INFODENGUE_PIPELINE_ENVIRONMENT: prod
       INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
@@ -191,7 +191,7 @@ services:
 
   worker-beat:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.prod}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}
     environment:
       INFODENGUE_PIPELINE_ENVIRONMENT: prod
     command:

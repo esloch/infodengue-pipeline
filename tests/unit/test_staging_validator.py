@@ -166,7 +166,7 @@ def test_validator_requires_fixture_prefix_and_load_false() -> None:
         settings, 'approved-fixtures/staging-fixture.csv', 30
     )
     root = Path(__file__).resolve().parents[2]
-    staging_env = (root / '.env.staging.example').read_text()
+    staging_env = (root / '.envs/.env.staging.example').read_text()
     operations = (root / 'docs/operations.md').read_text()
     assert 'INFODENGUE_PIPELINE_MINIO_PREFIX=approved-fixtures/' in staging_env
     assert 'approved-fixtures/staging-fixture.csv' in operations
