@@ -18,6 +18,65 @@ four queues remain separate: `pipeline.ingestion`, `pipeline.events`,
 The production-profile foreground SINAN watcher is supervised by the systemd
 user service described in [production](production.md#sinan-watcher-supervision).
 
+## Inspect workers, queues, and persisted work
+
+Run Compose commands from the repository root and select the deployment's
+Compose file and private `--env-file`. For development, inspect running
+services and recent worker logs with:
+
+```sh
+docker compose --env-file .envs/.env.example -f containers/compose.yaml ps
+docker compose --env-file .envs/.env.example -f containers/compose.yaml \
+  logs --since 15m worker-ingestion worker-events worker-orchestration \
+  worker-analysis worker-beat
+docker compose --env-file .envs/.env.example -f containers/compose.yaml \
+  exec worker-orchestration celery -A \
+  infodengue_pipeline.messaging.celery:celery_app inspect active_queues
+```
+
+The worker health checks use Celery `inspect ping`; `active_queues` confirms
+which queues a worker consumes. RabbitMQ management is exposed on loopback
+port 15673 in development, or its CLI can show queue depth:
+
+```sh
+docker compose --env-file .envs/.env.example -f containers/compose.yaml \
+  exec rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged
+```
+
+Use read-only SQL to inspect durable state. Connect with the private pipeline
+database role and avoid selecting credential-bearing configuration or dumping
+event payloads into shared logs. The following query shape shows recent ingress
+state and persisted jobs:
+
+```sql
+SELECT object_id, object_key, status, sha256, run_id, last_error, updated_at
+FROM pipeline.ingress_object
+ORDER BY updated_at DESC
+LIMIT 50;
+
+SELECT workflow_id, coverage, epiweek, status, queued_fingerprint, updated_at
+FROM pipeline.workflow
+ORDER BY updated_at DESC
+LIMIT 50;
+
+SELECT job_id, workflow_id, input_fingerprint, status, attempts, load,
+       exit_code, last_error, output_dir, updated_at
+FROM pipeline.analysis_job
+ORDER BY updated_at DESC
+LIMIT 50;
+
+SELECT status, count(*)
+FROM pipeline.outbox_event
+GROUP BY status
+ORDER BY status;
+```
+
+Use `object_id`/`sha256`, `run_id`, `event_id`, `workflow_id` and
+`input_fingerprint`, then `job_id` to follow one delivery through the system.
+An ingress row's `run_id` may be empty until correlation completes. Retained
+outbox payloads are replayed to reconstruct later candidate-week inputs; do
+not delete published rows as routine cleanup.
+
 For an existing staging host, create `.envs/` and copy the private root files
 without overwriting anything:
 
@@ -186,6 +245,22 @@ before any explicit retry. This is particularly important for any explicit
 lock scoped to the target database for the full scientific process, waiting
 at most `INFODENGUE_PIPELINE_ANALYSIS_LOAD_LOCK_TIMEOUT_SECONDS` (default 900
 seconds). Read-only `load=false` jobs do not acquire this lock.
+
+After reviewing the persisted row, output directory, structured logs, and
+scientific database effects, an operator may explicitly invoke the retry task
+from a worker container with the job UUID:
+
+```sh
+docker compose --env-file .envs/.env.example -f containers/compose.yaml \
+  exec worker-analysis celery -A \
+  infodengue_pipeline.messaging.celery:celery_app call \
+  pipeline.analysis.retry --args='["<job-uuid>"]'
+```
+
+Replace `<job-uuid>` with the reviewed stable UUID. This command changes the
+job from FAILED to QUEUED when it is still the current candidate and then
+dispatches it. It does not repair RUNNING jobs or make an interrupted
+scientific execution safe to repeat.
 
 The contiguous cursor remains at a failed candidate, so an explicit retry
 reuses that candidate's week and current input fingerprint. Retrying requires
