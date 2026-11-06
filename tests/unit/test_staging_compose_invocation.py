@@ -14,7 +14,7 @@ COMPOSE_PREFIX = [
     '-p',
     'infodengue-pipeline-staging',
     '--env-file',
-    '.env.staging',
+    '.envs/.env.staging',
     '-f',
     'containers/compose-staging.yaml',
 ]

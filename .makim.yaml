@@ -37,28 +37,28 @@ groups:
     tasks:
       config:
         help: Validate the development Compose configuration
-        run: docker compose --env-file .env.example -f containers/compose.yaml config --quiet
+        run: docker compose --env-file .envs/.env.example -f containers/compose.yaml config --quiet
       staging-config:
         help: Validate the staging topology using placeholders only
         run: >-
-          env PIPELINE_WORKER_ENV_FILE=../.env.staging.example
-          PIPELINE_ANALYSIS_ENV_FILE=../.env.staging.analysis.example
-          PIPELINE_E2E_ENV_FILE=../.env.staging.e2e.example
-          docker compose --env-file .env.staging.example
+          env PIPELINE_WORKER_ENV_FILE=../.envs/.env.staging.example
+          PIPELINE_ANALYSIS_ENV_FILE=../.envs/.env.staging.analysis.example
+          PIPELINE_E2E_ENV_FILE=../.envs/.env.staging.e2e.example
+          docker compose --env-file .envs/.env.staging.example
           -f containers/compose-staging.yaml config --quiet
       prod-config:
         help: Validate the production topology using placeholders only
         run: >-
-          env PIPELINE_WORKER_ENV_FILE=../.env.prod.example
-          PIPELINE_ANALYSIS_ENV_FILE=../.env.prod.analysis.example
-          docker compose --env-file .env.prod.example
+          env PIPELINE_WORKER_ENV_FILE=../.envs/.env.prod.example
+          PIPELINE_ANALYSIS_ENV_FILE=../.envs/.env.prod.analysis.example
+          docker compose --env-file .envs/.env.prod.example
           -f containers/compose-prod.yaml config --quiet
       up:
         help: Start development services
-        run: docker compose --env-file .env.example -f containers/compose.yaml up -d --build
+        run: docker compose --env-file .envs/.env.example -f containers/compose.yaml up -d --build
       down:
         help: Stop development services
-        run: docker compose --env-file .env.example -f containers/compose.yaml down
+        run: docker compose --env-file .envs/.env.example -f containers/compose.yaml down
 
   dev:
     tasks:
@@ -103,7 +103,7 @@ groups:
             type: string
             default: "7200"
         run: >-
-          docker compose -p infodengue-pipeline-staging --env-file .env.staging
+          docker compose -p infodengue-pipeline-staging --env-file .envs/.env.staging
           -f containers/compose-staging.yaml run --rm validator
           python scripts/validate_staging_e2e.py
           --object-key "${{ args.object_key }}"

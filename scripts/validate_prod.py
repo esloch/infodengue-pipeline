@@ -16,7 +16,7 @@ _COMPOSE = (
     'docker',
     'compose',
     '--env-file',
-    '.env.prod',
+    '.envs/.env.prod',
     '-f',
     'containers/compose-prod.yaml',
 )
@@ -108,8 +108,10 @@ def validate_running(output: str) -> None:
 
 def main() -> None:
     """Validate the deployed profile without starting or repairing services."""
-    if not Path('.env.prod').is_file():
-        raise RuntimeError('.env.prod: private production profile is missing')
+    if not Path('.envs/.env.prod').is_file():
+        raise RuntimeError(
+            '.envs/.env.prod: private production profile is missing'
+        )
     config = json.loads(command('config', '--format', 'json'))
     image = validate_config(config)
     validate_running(command('ps', '--all', '--format', 'json'))

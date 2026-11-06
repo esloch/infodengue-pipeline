@@ -22,15 +22,16 @@ Copy the tracked placeholders, replace every placeholder with privately
 provisioned rehearsal values, and restrict access:
 
 ```sh
-cp .env.prod.example .env.prod
-cp .env.prod.analysis.example .env.prod.analysis
-chmod 600 .env.prod .env.prod.analysis
+mkdir -p .envs
+cp .envs/.env.prod.example .envs/.env.prod
+cp .envs/.env.prod.analysis.example .envs/.env.prod.analysis
+chmod 600 .envs/.env.prod .envs/.env.prod.analysis
 ```
 
 The copied files are untracked. The core file supplies the read-only
 AlertaDengue `ingestion.run` source role and a runtime MinIO service account
 with read/list access limited to the configured bucket and prefix. Only
-`worker-analysis` receives `.env.prod.analysis` and its distinct, read-only
+`worker-analysis` receives `.envs/.env.prod.analysis` and its distinct, read-only
 analysis database role. The analysis role stays read-only while `load=false`.
 Keep the pipeline PostgreSQL, RabbitMQ, source DB, analysis DB, and MinIO
 credentials separate.
@@ -47,6 +48,45 @@ remains on the default network. No worker mounts a sibling checkout or Docker
 socket.
 
 ## Staging-host rehearsal
+
+### Migrating the active staging deployment's private files
+
+The active staging deployment uses `compose-prod.yaml` with private `.env.prod`
+and `.env.prod.analysis` files. From the repository root, copy them without
+overwriting any existing destination:
+
+```sh
+mkdir -p .envs
+cp -pn .env.prod .envs/.env.prod
+cp -pn .env.prod.analysis .envs/.env.prod.analysis
+```
+
+Edit only the Compose path values in `.envs/.env.prod`:
+`PIPELINE_WORKER_ENV_FILE=../.envs/.env.prod` and
+`PIPELINE_ANALYSIS_ENV_FILE=../.envs/.env.prod.analysis`. Keep both files at
+mode 0600. Preserve the deployed PR #22 image references exactly:
+`PIPELINE_IMAGE=ghcr.io/esloch/infodengue-pipeline@sha256:ac797591770128a1e946177ffd51d9304ce853516c65ff455849f0e05f9db5e3` and
+`PIPELINE_ANALYSIS_IMAGE=ghcr.io/esloch/infodengue-pipeline-analysis@sha256:1bc523ef1b42eb02828a431a8739a03a52fffcc5d5231e21fb3bb6c754124648`.
+Keep `INFODENGUE_PIPELINE_ANALYSIS_IMAGE` equal to the analysis image in both
+files, `INFODENGUE_PIPELINE_ANALYSIS_INITIAL_EPIWEEK=202642` in both files,
+and `INFODENGUE_PIPELINE_ANALYSIS_LOAD=false` in both files. Celery Beat must
+remain stopped.
+
+Validate without recreating containers:
+
+```sh
+stat -c '%a %n' .envs/.env.prod .envs/.env.prod.analysis
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml config --quiet
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml ps --all worker-beat
+```
+
+The first command should show mode 600 for both files, the config command
+checks the new paths without printing configuration, and `ps` only observes
+Beat's current state. Do not start or recreate any services for this migration.
+Keep the original root files until the new configuration is verified and the
+backup policy permits their removal.
 
 For the issue #9 manual acceptance sequence, use the
 [staging-host runbook](issue9-staging-rehearsal.md). Its image-digest, consumer
@@ -224,7 +264,7 @@ Before starting a privately configured rehearsal, render that configuration:
 
 ```sh
 docker compose \
-  --env-file .env.prod \
+  --env-file .envs/.env.prod \
   -f containers/compose-prod.yaml \
   config --quiet
 ```
@@ -287,12 +327,12 @@ explicit production-profile validation gate.
 
 ```sh
 docker compose \
-  --env-file .env.prod \
+  --env-file .envs/.env.prod \
   -f containers/compose-prod.yaml \
   up -d
 
 docker compose \
-  --env-file .env.prod \
+  --env-file .envs/.env.prod \
   -f containers/compose-prod.yaml \
   ps --all
 ```
@@ -313,7 +353,7 @@ For deliberate migration maintenance, an operator can run the Compose service:
 
 ```sh
 docker compose \
-  --env-file .env.prod \
+  --env-file .envs/.env.prod \
   -f containers/compose-prod.yaml \
   up migrate
 ```
@@ -325,7 +365,7 @@ This is an operator maintenance command, not an additional step before normal
 
 ```sh
 docker compose \
-  --env-file .env.prod \
+  --env-file .envs/.env.prod \
   -f containers/compose-prod.yaml \
   down
 ```

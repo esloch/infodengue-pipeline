@@ -21,7 +21,7 @@ docker build -t alertadengueanalise:dev-container-worker \
   -f "$ALERTA_ANALYSIS_SOURCE_DIR/containers/Dockerfile" \
   "$ALERTA_ANALYSIS_SOURCE_DIR"
 uv run makim containers.up
-docker compose --env-file .env.example -f containers/compose.yaml \
+docker compose --env-file .envs/.env.example -f containers/compose.yaml \
   run --rm worker-orchestration alembic upgrade head
 ```
 

@@ -40,7 +40,7 @@ services:
 
   migrate:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.staging}
     command: ["alembic", "upgrade", "head"]
     depends_on:
       postgres:
@@ -49,7 +49,7 @@ services:
 
   worker-ingestion:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.staging}
     command:
       - celery
       - -A
@@ -82,7 +82,7 @@ services:
 
   worker-events:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.staging}
     command:
       - celery
       - -A
@@ -112,7 +112,7 @@ services:
 
   worker-orchestration:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.staging}
     environment:
       INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
     command:
@@ -144,7 +144,7 @@ services:
 
   worker-analysis:
     image: ${PIPELINE_ANALYSIS_IMAGE:?set analysis worker image}
-    env_file: ${PIPELINE_ANALYSIS_ENV_FILE:-../.env.staging.analysis}
+    env_file: ${PIPELINE_ANALYSIS_ENV_FILE:-../.envs/.env.staging.analysis}
     environment:
       INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
     command:
@@ -179,7 +179,7 @@ services:
 
   worker-beat:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.staging}
     command:
       - celery
       - -A
@@ -202,7 +202,7 @@ services:
 
   validator:
     image: ${PIPELINE_IMAGE:?set pipeline image}
-    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.staging}
     environment:
       INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
     command: ["python", "scripts/validate_staging_e2e.py"]
@@ -216,8 +216,8 @@ services:
   e2e-runner:
     image: ${PIPELINE_IMAGE:?set pipeline image}
     env_file:
-      - ${PIPELINE_WORKER_ENV_FILE:-../.env.staging}
-      - path: ${PIPELINE_E2E_ENV_FILE:-../.env.staging.e2e}
+      - ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.staging}
+      - path: ${PIPELINE_E2E_ENV_FILE:-../.envs/.env.staging.e2e}
         required: false
     environment:
       INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
@@ -228,7 +228,7 @@ services:
       - staging_integrations
     volumes:
       - ${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
-      - ${STAGING_E2E_FIXTURE_HOST_PATH:-../.env.staging.e2e.example}:${STAGING_E2E_FIXTURE_CONTAINER_PATH:-/tmp/staging-e2e-fixture.dbf}:ro
+      - ${STAGING_E2E_FIXTURE_HOST_PATH:-../.envs/.env.staging.e2e.example}:${STAGING_E2E_FIXTURE_CONTAINER_PATH:-/tmp/staging-e2e-fixture.dbf}:ro
 
 volumes:
   pipeline_staging_pgdata:
