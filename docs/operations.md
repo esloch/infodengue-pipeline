@@ -20,6 +20,63 @@ user service described in [production](production.md#sinan-watcher-supervision).
 
 ## Inspect workers, queues, and persisted work
 
+### Production-profile status
+
+On the staging host, with the already running production-profile stack and its
+private `.envs/.env.prod` file, run:
+
+```sh
+uv run makim prod.status
+```
+
+This executes the report inside the existing `worker-events` container. It
+does not start services, dispatch Celery work, retry jobs, or change rows. The
+`prod.status` task and Python module must be included in the deployed
+`PIPELINE_IMAGE`; build and deploy the updated worker image, then recreate the
+production-profile workers through the normal deployment process before this
+command is available. Running containers keep their existing image and cannot
+gain the command from a host checkout alone. The
+database transaction defaults to read-only and has a five-second statement
+timeout. The report shows counts and up to 20 recent rows per category; it
+omits event payloads, connection settings, and recorded exception text. A
+query or connection error exits nonzero with diagnostics suppressed. Counts
+are current at query time; recent rows are bounded snapshots, not a live
+worker or RabbitMQ health check.
+
+Read a failed ingress `object_id` with its bucket/object identity and SHA-256
+to correlate logs and retained source data. `MATERIALIZED` means the file was
+placed in the local incoming tree; it does not establish that AlertaDengue
+finished the run. Outbox pending events have not been confirmed published.
+Workflow and job states live in PostgreSQL and remain authoritative when
+broker messages are missing.
+
+### Explicit analysis retry
+
+Find a failed candidate with `uv run makim prod.status`, then inspect its
+recorded row and output directory through the approved production-profile
+access path. The row records `last_error`, `exit_code`, `attempts`, `load`, and
+`output_dir`; `pipeline-runner.log` and validated scientific outputs are in
+that directory. Treat logs and error text as potentially sensitive. Check
+whether the failed runner applied any scientific database writes before
+retrying. In particular, never retry an interrupted `load=true` execution
+until an operator has reconciled its database side effects.
+
+Only an operator may invoke the existing task, using the UUID from the row:
+
+```sh
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml exec -T worker-events celery -A \
+  infodengue_pipeline.messaging.celery:celery_app call \
+  pipeline.analysis.retry --args='["<job-uuid>"]'
+```
+
+Then inspect `prod.status` again and verify the same `job_id` is queued, its
+attempt count changes only when execution is claimed, and its new output path
+uses `attempt-N`. The task returns without dispatching if the job is no longer
+`FAILED`, its workflow inputs are stale, or it is no longer the next eligible
+week. It does not reset `RUNNING` work. A returned false result requires
+operator investigation; do not edit rows to force eligibility.
+
 Run Compose commands from the repository root and select the deployment's
 Compose file and private `--env-file`. For development, inspect running
 services and recent worker logs with:
@@ -317,3 +374,181 @@ ingestion history for diagnosis. Restore legacy synchronization only after
 confirming the new materializer is inactive for that prefix. Reverse this
 sequence for another staging attempt: disable legacy synchronization first,
 then enable the pipeline scanner. Never run both publishers for one prefix.
+
+## PostgreSQL backup and isolated restore
+
+Pipeline PostgreSQL is authoritative for ingress materialization identities,
+outbox delivery, workflow state, and analysis jobs. A custom-format `pg_dump`
+creates a consistent snapshot while writes continue. Run from the deployment
+host with the private profile configured for the intended staging deployment:
+
+```sh
+set -euo pipefail
+umask 077
+backup_dir=/var/backups/infodengue-pipeline
+install -d -m 0700 "$backup_dir"
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+docker compose --env-file .envs/.env.prod -f containers/compose-prod.yaml \
+  exec -T postgres pg_dump -U pipeline_prod -d pipeline_prod -Fc \
+  > "$backup_dir/pipeline-$stamp.dump"
+chmod 0600 "$backup_dir/pipeline-$stamp.dump"
+sha256sum "$backup_dir/pipeline-$stamp.dump" \
+  > "$backup_dir/pipeline-$stamp.dump.sha256"
+```
+
+This procedure was reviewed but not run against a deployment in this change.
+A nonzero dump exit, empty output, or checksum mismatch means the backup is
+unusable; resolve the cause and take another dump. Copy verified dumps and
+checksums to access-controlled storage on a
+separate failure domain. Keep mode `0600` and directory mode `0700`. Suggested
+initial policy: retain daily backups for 30 days and monthly backups for 12
+months, subject to the organization's approved retention and recovery-point
+objectives. Prune only verified backups under that policy; cleanup is manual.
+
+Restore acceptance must use a separately provisioned, disposable PostgreSQL
+target. Do not reuse a Compose project, database volume, database name,
+endpoint, broker, worker, or scientific credential from a running deployment.
+The following example creates a unique internal Docker network and a fresh
+anonymous database volume. It has no broker or worker and uses only a loopback
+host port. Substitute a verified backup path and unique suffix; first check
+that the selected port and names are unused.
+
+```sh
+set -euo pipefail
+backup_file=/var/backups/infodengue-pipeline/pipeline-REPLACE_WITH_VERIFIED_TIMESTAMP.dump
+backup_dir=$(dirname "$backup_file")
+backup_name=$(basename "$backup_file")
+restore_name="pipeline-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+restore_network="$restore_name-net"
+restore_container="$restore_name-postgres"
+restore_port=55439
+(
+  cd "$backup_dir"
+  sha256sum --check "$backup_name.sha256"
+)
+docker network create --internal "$restore_network"
+cleanup_restore() {
+  docker rm -f "$restore_container" >/dev/null 2>&1 || true
+  docker network rm "$restore_network" >/dev/null 2>&1 || true
+}
+trap cleanup_restore EXIT
+docker run -d --name "$restore_container" --network "$restore_network" \
+  -p "127.0.0.1:$restore_port:5432" \
+  -e POSTGRES_DB=pipeline_restore -e POSTGRES_USER=restore \
+  -e POSTGRES_PASSWORD=restore-only-local \
+  postgres:16-alpine
+docker cp "$backup_file" "$restore_container:/tmp/pipeline.dump"
+ready=0
+for attempt in $(seq 1 30); do
+  if docker exec "$restore_container" pg_isready -U restore \
+    -d pipeline_restore; then ready=1; break; fi
+  sleep 1
+done
+if [ "$ready" -ne 1 ]; then
+  echo 'Isolated PostgreSQL did not become ready' >&2
+  exit 1
+fi
+docker exec "$restore_container" pg_restore --exit-on-error --no-owner --no-acl \
+  -U restore -d pipeline_restore /tmp/pipeline.dump
+docker exec "$restore_container" psql -U restore -d pipeline_restore -c \
+  "SELECT version_num FROM alembic_version"
+docker exec "$restore_container" psql -U restore -d pipeline_restore -c \
+  "SELECT table_name FROM information_schema.tables \
+   WHERE table_schema = 'pipeline' ORDER BY table_name"
+docker exec "$restore_container" psql -U restore -d pipeline_restore -c \
+  "SELECT 'ingress', status, count(*) FROM pipeline.ingress_object \
+   GROUP BY status UNION ALL SELECT 'workflow', status, count(*) \
+   FROM pipeline.workflow GROUP BY status UNION ALL \
+   SELECT 'analysis_job', status, count(*) FROM pipeline.analysis_job \
+   GROUP BY status UNION ALL SELECT 'outbox_event', status, count(*) \
+   FROM pipeline.outbox_event GROUP BY status"
+INFODENGUE_PIPELINE_DATABASE_URL="postgresql+psycopg://restore:restore-only-local@127.0.0.1:$restore_port/pipeline_restore" \
+  uv run python -m infodengue_pipeline.production.status
+```
+
+The internal network prevents the restore target from initiating external
+connections. Docker publishes the PostgreSQL port on host loopback so the
+validation client can connect from the deployment host. No PostgreSQL client
+binaries are required on the host: `pg_restore`, `psql`, and `pg_isready` run
+inside the disposable PostgreSQL image; the host status command uses the
+project's Python driver. Confirm host connectivity using the status command
+before accepting the restore.
+
+Compare `alembic_version` with `uv run alembic heads`, confirm the expected
+pipeline tables, and compare status counts and representative
+`object_id`/`sha256`, `run_id`, `workflow_id`, `job_id` and `event_id` values
+with the backup-time inventory. Investigate any mismatch before accepting the
+restore. Keep the isolated target available until the comparison is complete;
+then remove only the uniquely named disposable container and its internal
+network. The `EXIT` trap removes only the newly named disposable container and
+network after success or failure; keep the trap in place. Never restore over
+an existing database. A successful dump alone is not restore acceptance.
+
+No isolated PostgreSQL restore was available or
+executed here; restore validation remains pending.
+
+## RabbitMQ recovery
+
+RabbitMQ is the Celery transport; the production Compose profile stores broker
+data in named volume `pipeline_prod_rabbitmq`, mounted at `/var/lib/rabbitmq`.
+Keep the volume when restarting the broker. A restart preserves persistent
+broker data, but unacknowledged or not durably accepted messages can be
+redelivered or lost according to broker and task acknowledgement timing. Do
+not purge queues or remove the volume as recovery.
+
+PostgreSQL remains the authoritative work ledger. Pending outbox rows can be
+published by the existing outbox poller. Queued analysis jobs are redispatched
+by `pipeline.analysis.dispatch_ready` when the configured beat/dispatch path
+runs; the dispatcher republishes stale queued deliveries. A job left
+`RUNNING` after worker loss is not automatically reset and needs operator
+review of artifacts and scientific database effects. A `FAILED` job requires
+the explicit retry procedure above. Do not assume every lost message is
+recovered until PostgreSQL state and worker logs are checked.
+
+## Ingress and scientific artifact retention
+
+Original SINAN objects in MinIO are source-owned inputs. Retain them according
+to the upstream data owner's policy and do not delete them as pipeline
+cleanup. For operational planning, require at least 90 days of source-object
+availability where the upstream owner permits it; a longer upstream policy
+takes precedence. This is a retention expectation, not a MinIO lifecycle
+change. Pipeline PostgreSQL owns each object identity and materialization
+state. Downloaded files under the configured incoming root are staging copies
+handed to AlertaDengue ingestion; they are not canonical SINAN storage. The
+AlertaDengue watcher may move a staged file into its canonical storage tree;
+that moved file is no longer a local incoming copy. This pipeline does not
+move it back or apply retention to the watcher's canonical copy; follow
+AlertaDengue and StorageBox retention rules for that data. Keep
+successful local staged downloads for 30 days after `ingested`; retain
+`discovered`, `materialized`, and `failed` files until an operator resolves
+the state and for 30 days after the resulting terminal state.
+Canonical storage movement and deduplication remain owned by AlertaDengue and
+StorageBox. Keep MinIO lifecycle configuration unchanged. For investigation
+and supported replay, retain source objects and local staged files until the
+corresponding ingestion outcome and recovery window have been reviewed; this
+pipeline does not delete either automatically.
+
+Analysis outputs live below `INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT`, in a
+job-ID directory. Explicit retries use `attempt-N` subdirectories and keep
+prior attempts. Retain `pipeline-runner.log`, required generated `alertas`
+artifacts, `sql/output_dengue.sql`, `sql/output_chik.sql`, and map images when
+present. Retain failed and successful outputs for at least the 30-day
+investigation window suggested for daily database backups, or longer while an
+incident or scientific review is open. A directory is only a cleanup
+candidate after matching it to a terminal-success job and its retention
+deadline. Queued, running, failed, or unresolved jobs and all their attempts
+are protected. There is no automated artifact cleanup; future automation
+needs separate review and validation.
+
+## Operational acceptance checklist
+
+- `prod.status` runs against the intended profile and reports plausible state.
+- Failed jobs were reviewed for error context, artifacts, and possible
+  scientific database side effects before any explicit retry.
+- A verified PostgreSQL backup exists in protected separate storage, and an
+  isolated restore has been rehearsed and accepted.
+- Broker restart/recovery preserved named volumes; queued, running, failed,
+  and pending outbox states were reconciled against PostgreSQL.
+- MinIO source retention, staged download handling, and canonical ownership
+  boundaries are understood; no lifecycle changes were made by this pipeline.
+- Analysis outputs for unresolved work remain retained and accessible.
