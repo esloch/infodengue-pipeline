@@ -111,6 +111,12 @@ groups:
 
   prod:
     tasks:
+      status:
+        help: Read operational state through the already running production-profile worker
+        run: >-
+          docker compose --env-file .envs/.env.prod
+          -f containers/compose-prod.yaml exec -T worker-events
+          python -m infodengue_pipeline.production.status
       validate:
         help: Validate the running production profile without changing state
         run: python scripts/validate_prod.py
