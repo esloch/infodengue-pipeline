@@ -6,7 +6,8 @@ import re
 
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
+from typing import Callable
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import structlog
 
@@ -68,11 +69,13 @@ class IngressCoordinator:
         store: ObjectStore,
         incoming_root: Path,
         prefix: str = '',
+        completed_run_for_sha256: Callable[[str], UUID | None] | None = None,
     ) -> None:
         self._sessions = sessions
         self._store = store
         self._root = incoming_root.resolve()
         self._prefix = prefix
+        self._completed_run_for_sha256 = completed_run_for_sha256
 
     def scan(self) -> int:
         """Materialize new and retryable supported objects."""
@@ -150,6 +153,25 @@ class IngressCoordinator:
                                 f'incomplete download for {metadata.key}'
                             )
                         digest = file_sha256(staged)
+                        completed_run_id = (
+                            self._completed_run_for_sha256(digest)
+                            if self._completed_run_for_sha256 is not None
+                            else None
+                        )
+                        if completed_run_id is not None:
+                            row.sha256 = digest
+                            row.run_id = completed_run_id
+                            row.status = IngressStatus.SKIPPED
+                            row.last_error = None
+                            staged.unlink(missing_ok=True)
+                            logger.info(
+                                'ingress_historical_completion_reconciled',
+                                object_id=str(object_id),
+                                object_key=metadata.key,
+                                sha256=digest,
+                                run_id=str(completed_run_id),
+                            )
+                            continue
                         previous = session.scalar(
                             select(IngressObjectRow.object_id).where(
                                 IngressObjectRow.bucket == metadata.bucket,

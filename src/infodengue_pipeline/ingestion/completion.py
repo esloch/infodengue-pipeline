@@ -65,6 +65,10 @@ class CompletedIngestionSource(Protocol):
         """Return the completed run matching a local materialized file."""
         ...
 
+    def reconcile_by_sha256(self, digest: str) -> CompletedRun | None:
+        """Return a safe completed match or fail for an existing run."""
+        ...
+
 
 class PostgresCompletedIngestionSource:
     """Query the external PostgreSQL contract without importing Django."""
@@ -141,6 +145,24 @@ class PostgresCompletedIngestionSource:
                 else None
             ),
         )
+
+    def reconcile_by_sha256(self, digest: str) -> CompletedRun | None:
+        """Return a completed run or fail closed for any existing run.
+
+        A non-completed source record can represent an ingestion whose
+        effects are still in progress or need operator recovery. Publishing
+        the same bytes again could duplicate those effects.
+        """
+        run = self.by_sha256(digest)
+        if run is not None:
+            return run
+        status = self.status_by_sha256(digest)
+        if status is not None:
+            raise RuntimeError(
+                'matching AlertaDengue ingestion exists without a verifiable '
+                f'completed record (status={status})'
+            )
+        return None
 
 
 class IngestionCompletionBridge:

@@ -1,5 +1,6 @@
 """Ingress and AlertaDengue completion bridge integration tests."""
 
+import hashlib
 import os
 
 from concurrent.futures import ThreadPoolExecutor
@@ -98,6 +99,10 @@ class FakeCompletedSource:
         self.lookups.append(digest)
         return self.run
 
+    def reconcile_by_sha256(self, digest: str) -> CompletedRun | None:
+        """Return a completed record or fail closed when lookup fails."""
+        return self.by_sha256(digest)
+
 
 class RecordingPublisher:
     """Collect outbox events as a broker confirmation test double."""
@@ -145,6 +150,61 @@ def test_ingress_identity_destination_and_deduplication(
         assert row.sha256 is not None
         assert row.status is IngressStatus.MATERIALIZED
         assert len(row.sha256) == 64
+
+
+def test_historical_completed_object_is_not_published(
+    sessions, tmp_path: Path
+) -> None:
+    """Verified historical bytes are persisted as skipped with their run."""
+    metadata = ObjectMetadata('sinan', 'DENGUE (3).csv', 15, 'etag')
+    store = FakeStore([metadata])
+    digest = hashlib.sha256(store.payload).hexdigest()
+    run_id = uuid4()
+    root = tmp_path / 'incoming'
+    coordinator = IngressCoordinator(
+        sessions,
+        store,
+        root,
+        completed_run_for_sha256=lambda value: (
+            run_id if value == digest else None
+        ),
+    )
+
+    assert coordinator.scan() == 0
+    assert not safe_destination(root, metadata).exists()
+    with sessions() as session:
+        row = session.scalar(select(IngressObjectRow))
+        assert row is not None
+        assert row.status is IngressStatus.SKIPPED
+        assert row.sha256 == digest
+        assert row.run_id == run_id
+        assert row.last_error is None
+        assert session.scalar(select(OutboxEventRow)) is None
+    assert coordinator.scan() == 0
+    assert store.downloads == [metadata.key]
+
+
+def test_ingress_fails_closed_when_historical_lookup_is_unavailable(
+    sessions, tmp_path: Path
+) -> None:
+    """A source failure never publishes a verified download."""
+    metadata = ObjectMetadata('sinan', 'historical.csv', 15, 'etag')
+    store = FakeStore([metadata])
+
+    def unavailable(_digest: str):
+        raise OSError('source database unavailable')
+
+    root = tmp_path / 'incoming'
+    assert (
+        IngressCoordinator(
+            sessions, store, root, completed_run_for_sha256=unavailable
+        ).scan()
+        == 0
+    )
+    assert not safe_destination(root, metadata).exists()
+    with sessions() as session:
+        row = session.scalar(select(IngressObjectRow))
+        assert row is not None and row.status is IngressStatus.FAILED
 
 
 def test_same_key_replacement_and_unchanged_content(

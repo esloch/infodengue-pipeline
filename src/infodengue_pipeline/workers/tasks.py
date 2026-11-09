@@ -129,11 +129,27 @@ def scan_ingress() -> int:
     """Discover MinIO files and atomically materialize supported objects."""
     settings = get_settings()
     configure_logging(settings.log_level)
+    if settings.alerta_source_database_url is None:
+        if settings.environment != 'dev':
+            raise RuntimeError(
+                'AlertaDengue source database is required for safe ingress'
+            )
+        completed_run_for_sha256 = None
+    else:
+        source = _completed_source(
+            settings.alerta_source_database_url.get_secret_value()
+        )
+
+        def completed_run_for_sha256(digest: str) -> UUID | None:
+            run = source.reconcile_by_sha256(digest)
+            return run.run_id if run is not None else None
+
     return IngressCoordinator(
         session_factory(),
         build_object_store(settings),
         settings.incoming_root,
         settings.minio_prefix,
+        completed_run_for_sha256,
     ).scan()
 
 

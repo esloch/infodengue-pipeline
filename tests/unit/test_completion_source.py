@@ -137,6 +137,23 @@ def test_source_ignores_missing_run_and_missing_finish_time() -> None:
     assert source.by_sha256('b' * 64) is None
 
 
+def test_reconciliation_rejects_existing_noncompleted_run() -> None:
+    """An existing incomplete run cannot be replayed into the watcher."""
+    source = PostgresCompletedIngestionSource(FakeEngine(FakeConnection(None)))
+    source.by_sha256 = lambda _digest: None
+    source.status_by_sha256 = lambda _digest: 'staging'
+    with pytest.raises(RuntimeError, match='without a verifiable completed'):
+        source.reconcile_by_sha256('d' * 64)
+
+
+def test_reconciliation_allows_unknown_sha256() -> None:
+    """A SHA absent from the source remains eligible for normal ingress."""
+    source = PostgresCompletedIngestionSource(FakeEngine(FakeConnection(None)))
+    source.by_sha256 = lambda _digest: None
+    source.status_by_sha256 = lambda _digest: None
+    assert source.reconcile_by_sha256('e' * 64) is None
+
+
 def test_source_normalizes_naive_timestamp_to_utc() -> None:
     """A naive PostgreSQL timestamp is interpreted as UTC."""
     row = {
