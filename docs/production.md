@@ -47,6 +47,37 @@ orchestration, and analysis join the configured integration network. Beat
 remains on the default network. No worker mounts a sibling checkout or Docker
 socket.
 
+## Retained SINAN objects at first startup
+
+Production MinIO retains `DENGUE (3).csv` and `CHIKUNGUNYA (4).csv` in the
+`sinan-infodengue` bucket root. Before the pipeline scanner runs, verify the
+read-only AlertaDengue source connection and the completed `ingestion.run`
+records for their known SHA-256 values:
+
+| Object | SHA-256 | Canonical CID-10 | Delivery week |
+| --- | --- | --- | --- |
+| `DENGUE (3).csv` | `848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd` | `A90` | `202644` |
+| `CHIKUNGUNYA (4).csv` | `bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58` | `A92.0` | `202644` |
+
+The scanner verifies downloaded bytes by SHA-256 before the publication
+step. A matching completed run is recorded as `skipped` with its upstream
+`run_id`; no file is placed in incoming. Missing source access or invalid
+completed-run metadata fails closed. Keep the legacy root-level MinIO
+materializer stopped before enabling this scanner so only one materializer
+owns the bucket root. Keep Beat stopped for the first controlled scan. With
+`worker-ingestion` running, enqueue one scan and wait for it to finish:
+
+```sh
+docker compose --env-file .envs/.env.prod -f containers/compose-prod.yaml \
+  exec worker-ingestion celery -A \
+  infodengue_pipeline.messaging.celery:celery_app call pipeline.ingestion.scan
+```
+
+Query `pipeline.ingress_object` for both hashes and verify `skipped` status,
+matching run IDs, and no new files in the watched incoming directory. Only
+then enable periodic scanning. Skipped rows create no historical completion
+events or scientific jobs.
+
 ## Staging-host rehearsal
 
 ### Migrating the active staging deployment's private files

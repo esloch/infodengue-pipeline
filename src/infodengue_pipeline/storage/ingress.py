@@ -6,7 +6,8 @@ import re
 
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
+from typing import Callable
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import structlog
 
@@ -68,11 +69,13 @@ class IngressCoordinator:
         store: ObjectStore,
         incoming_root: Path,
         prefix: str = '',
+        completed_run_for_sha256: Callable[[str], UUID | None] | None = None,
     ) -> None:
         self._sessions = sessions
         self._store = store
         self._root = incoming_root.resolve()
         self._prefix = prefix
+        self._completed_run_for_sha256 = completed_run_for_sha256
 
     def scan(self) -> int:
         """Materialize new and retryable supported objects."""
@@ -129,12 +132,41 @@ class IngressCoordinator:
                     )
                     session.add(row)
                     session.flush()
-                if row.status is IngressStatus.DISCOVERED and row.sha256:
+                digest = row.sha256
+                if row.status is IngressStatus.DISCOVERED and digest:
                     logger.info(
                         'ingress_prepared_recovery',
                         object_id=str(object_id),
                         object_key=metadata.key,
                     )
+                    try:
+                        run_id = (
+                            self._completed_run_for_sha256(digest)
+                            if self._completed_run_for_sha256 is not None
+                            else None
+                        )
+                        if run_id is not None:
+                            staged.unlink(missing_ok=True)
+                            row.run_id = run_id
+                            row.status = IngressStatus.SKIPPED
+                            row.last_error = None
+                            logger.info(
+                                'ingress_historical_completion_skipped',
+                                object_id=str(object_id),
+                                object_key=metadata.key,
+                                sha256=digest,
+                                run_id=str(run_id),
+                            )
+                            continue
+                    except Exception as exc:
+                        row.last_error = str(exc)[:512]
+                        logger.error(
+                            'ingress_recovery_verification_failed',
+                            object_id=str(object_id),
+                            object_key=metadata.key,
+                            error_type=type(exc).__name__,
+                        )
+                        continue
                 else:
                     try:
                         materialized = self._store.materialize(
@@ -150,6 +182,25 @@ class IngressCoordinator:
                                 f'incomplete download for {metadata.key}'
                             )
                         digest = file_sha256(staged)
+                        run_id = (
+                            self._completed_run_for_sha256(digest)
+                            if self._completed_run_for_sha256 is not None
+                            else None
+                        )
+                        if run_id is not None:
+                            row.sha256 = digest
+                            row.run_id = run_id
+                            row.status = IngressStatus.SKIPPED
+                            row.last_error = None
+                            staged.unlink(missing_ok=True)
+                            logger.info(
+                                'ingress_historical_completion_skipped',
+                                object_id=str(object_id),
+                                object_key=metadata.key,
+                                sha256=digest,
+                                run_id=str(run_id),
+                            )
+                            continue
                         previous = session.scalar(
                             select(IngressObjectRow.object_id).where(
                                 IngressObjectRow.bucket == metadata.bucket,

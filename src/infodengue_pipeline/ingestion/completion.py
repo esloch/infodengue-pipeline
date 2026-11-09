@@ -65,6 +65,10 @@ class CompletedIngestionSource(Protocol):
         """Return the completed run matching a local materialized file."""
         ...
 
+    def completed_run_id_by_sha256(self, digest: str) -> UUID | None:
+        """Return a verified completed run or no upstream match."""
+        ...
+
 
 class PostgresCompletedIngestionSource:
     """Query the external PostgreSQL contract without importing Django."""
@@ -141,6 +145,26 @@ class PostgresCompletedIngestionSource:
                 else None
             ),
         )
+
+    def completed_run_id_by_sha256(self, digest: str) -> UUID | None:
+        """Fail closed for incomplete or inconsistent upstream records."""
+        status = self.status_by_sha256(digest)
+        if status is None:
+            return None
+        if status != 'completed':
+            raise ValueError('matching AlertaDengue run is not completed')
+        run = self.by_sha256(digest)
+        if (
+            run is None
+            or run.status != 'completed'
+            or run.sha256 != digest
+            or run.canonical_cid10 is None
+        ):
+            raise ValueError('completed AlertaDengue run cannot be verified')
+        Coverage(run.uf)
+        resolve_run_disease(run.disease, run.canonical_cid10)
+        Epiweek.parse(run.delivery_se)
+        return run.run_id
 
 
 class IngestionCompletionBridge:

@@ -137,6 +137,46 @@ def test_source_ignores_missing_run_and_missing_finish_time() -> None:
     assert source.by_sha256('b' * 64) is None
 
 
+def test_completed_run_id_requires_consistent_source_metadata() -> None:
+    """Historical lookup accepts only an exact completed SHA and CID-10."""
+    digest = 'a' * 64
+    row = {
+        'id': uuid4(),
+        'status': 'completed',
+        'uf': 'MG',
+        'disease': 'A92',
+        'canonical_cid10': 'A92.0',
+        'delivery_se': 202644,
+        'sha256': digest,
+        'finished_at': datetime.now(timezone.utc),
+    }
+    connection = FakeConnection(row)
+    source = PostgresCompletedIngestionSource(FakeEngine(connection))
+    assert source.completed_run_id_by_sha256(digest) == row['id']
+    assert all(
+        statement == 'SET TRANSACTION READ ONLY'
+        for statement, _ in connection.statements[::2]
+    )
+    row['sha256'] = 'b' * 64
+    with pytest.raises(ValueError, match='cannot be verified'):
+        source.completed_run_id_by_sha256(digest)
+    row['sha256'] = digest
+    row['canonical_cid10'] = None
+    with pytest.raises(ValueError, match='cannot be verified'):
+        source.completed_run_id_by_sha256(digest)
+
+
+def test_incomplete_or_unknown_source_is_safe() -> None:
+    """Unknown SHA is fresh; an existing incomplete run fails closed."""
+    source = PostgresCompletedIngestionSource(FakeEngine(FakeConnection(None)))
+    assert source.completed_run_id_by_sha256('a' * 64) is None
+    source = PostgresCompletedIngestionSource(
+        FakeEngine(FakeConnection({'status': 'failed'}))
+    )
+    with pytest.raises(ValueError, match='not completed'):
+        source.completed_run_id_by_sha256('a' * 64)
+
+
 def test_source_normalizes_naive_timestamp_to_utc() -> None:
     """A naive PostgreSQL timestamp is interpreted as UTC."""
     row = {
