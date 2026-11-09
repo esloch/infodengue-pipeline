@@ -19,11 +19,9 @@ MinIO object
 ```
 
 Alembic revision `0002_ingress_analysis_jobs` follows
-`0001_pipeline_foundation` and adds pipeline-owned ingress and analysis job
-tables. Revision `0003_historical_ingress_reconciliation` adds validated
-historical source metadata and the distinct `reconciled` ingress state. Apply
-all revisions with the normal development migration command; validate both a
-clean database and an upgrade from `0002_ingress_analysis_jobs` before
+`0001_pipeline_foundation` and adds only pipeline-owned ingress and analysis
+job tables. Apply it with the normal development migration command; validate
+both a clean database and an upgrade from `0001_pipeline_foundation` before
 staging rollout.
 
 ## Pipeline schema migration workflow

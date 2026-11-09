@@ -6,7 +6,6 @@ from uuid import uuid4
 import pytest
 
 from infodengue_pipeline.ingestion.completion import (
-    CompletedRun,
     PostgresCompletedIngestionSource,
     build_source,
 )
@@ -25,12 +24,6 @@ class FakeResult:
     def first(self):
         """Return the first configured row."""
         return self._row
-
-    def all(self):
-        """Return all configured rows as mappings."""
-        if self._row is None:
-            return []
-        return self._row if isinstance(self._row, list) else [self._row]
 
     def scalar_one(self):
         """Return the scalar existence probe result."""
@@ -144,84 +137,44 @@ def test_source_ignores_missing_run_and_missing_finish_time() -> None:
     assert source.by_sha256('b' * 64) is None
 
 
-def test_reconciliation_rejects_existing_noncompleted_run() -> None:
-    """An existing incomplete run cannot be replayed into the watcher."""
+def test_completed_run_id_requires_consistent_source_metadata() -> None:
+    """Historical lookup accepts only an exact completed SHA and CID-10."""
+    digest = 'a' * 64
+    row = {
+        'id': uuid4(),
+        'status': 'completed',
+        'uf': 'MG',
+        'disease': 'A92',
+        'canonical_cid10': 'A92.0',
+        'delivery_se': 202644,
+        'sha256': digest,
+        'finished_at': datetime.now(timezone.utc),
+    }
+    connection = FakeConnection(row)
+    source = PostgresCompletedIngestionSource(FakeEngine(connection))
+    assert source.completed_run_id_by_sha256(digest) == row['id']
+    assert all(
+        statement == 'SET TRANSACTION READ ONLY'
+        for statement, _ in connection.statements[::2]
+    )
+    row['sha256'] = 'b' * 64
+    with pytest.raises(ValueError, match='cannot be verified'):
+        source.completed_run_id_by_sha256(digest)
+    row['sha256'] = digest
+    row['canonical_cid10'] = None
+    with pytest.raises(ValueError, match='cannot be verified'):
+        source.completed_run_id_by_sha256(digest)
+
+
+def test_incomplete_or_unknown_source_is_safe() -> None:
+    """Unknown SHA is fresh; an existing incomplete run fails closed."""
     source = PostgresCompletedIngestionSource(FakeEngine(FakeConnection(None)))
-    source.by_sha256 = lambda _digest: None
-    source._statuses_by_sha256 = lambda _digest: ['staging']
-    with pytest.raises(RuntimeError, match='without a verifiable completed'):
-        source.reconcile_by_sha256('d' * 64)
-
-
-def test_reconciliation_rejects_ambiguous_source_sha() -> None:
-    """Duplicate source rows cannot be selected arbitrarily by SHA."""
+    assert source.completed_run_id_by_sha256('a' * 64) is None
     source = PostgresCompletedIngestionSource(
-        FakeEngine(FakeConnection([{'status': 'completed'}] * 2))
+        FakeEngine(FakeConnection({'status': 'failed'}))
     )
-    with pytest.raises(ValueError, match='multiple AlertaDengue runs'):
-        source.reconcile_by_sha256('d' * 64)
-
-
-def test_reconciliation_allows_unknown_sha256() -> None:
-    """A SHA absent from the source remains eligible for normal ingress."""
-    source = PostgresCompletedIngestionSource(FakeEngine(FakeConnection(None)))
-    source.by_sha256 = lambda _digest: None
-    source._statuses_by_sha256 = lambda _digest: []
-    assert source.reconcile_by_sha256('e' * 64) is None
-
-
-def test_reconciliation_accepts_complete_canonical_run() -> None:
-    """Only a consistent run with all scientific identity fields is valid."""
-    digest = 'f' * 64
-    run = CompletedRun(
-        uuid4(),
-        'completed',
-        'MG',
-        'A92',
-        202644,
-        digest,
-        datetime(2026, 11, 1, tzinfo=timezone.utc),
-        'A92.0',
-    )
-    source = PostgresCompletedIngestionSource(FakeEngine(FakeConnection(None)))
-    source._statuses_by_sha256 = lambda _digest: ['completed']
-    source.by_sha256 = lambda _digest: run
-    assert source.reconcile_by_sha256(digest) == run
-
-
-@pytest.mark.parametrize(
-    ('changes', 'message'),
-    [
-        ({'sha256': '0' * 64}, 'SHA-256 does not match'),
-        ({'canonical_cid10': None}, 'lacks canonical CID-10'),
-        ({'canonical_cid10': 'A90'}, 'inconsistent'),
-        ({'delivery_se': 202600}, 'Invalid epidemiological week'),
-        ({'finished_at': datetime(2026, 11, 1)}, 'timezone aware'),
-        ({'status': 'failed'}, 'not completed'),
-    ],
-)
-def test_reconciliation_rejects_invalid_completed_metadata(
-    changes: dict[str, object], message: str
-) -> None:
-    """Invalid source identity is never accepted as historical evidence."""
-    from dataclasses import replace
-
-    digest = 'f' * 64
-    run = CompletedRun(
-        uuid4(),
-        'completed',
-        'MG',
-        'A92',
-        202644,
-        digest,
-        datetime(2026, 11, 1, tzinfo=timezone.utc),
-        'A92.0',
-    )
-    source = PostgresCompletedIngestionSource(FakeEngine(FakeConnection(None)))
-    source._statuses_by_sha256 = lambda _digest: ['completed']
-    source.by_sha256 = lambda _digest: replace(run, **changes)
-    with pytest.raises(ValueError, match=message):
-        source.reconcile_by_sha256(digest)
+    with pytest.raises(ValueError, match='not completed'):
+        source.completed_run_id_by_sha256('a' * 64)
 
 
 def test_source_normalizes_naive_timestamp_to_utc() -> None:

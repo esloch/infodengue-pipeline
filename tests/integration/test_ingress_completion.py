@@ -1,6 +1,7 @@
 """Ingress and AlertaDengue completion bridge integration tests."""
 
 import hashlib
+import os
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -41,7 +42,7 @@ from infodengue_pipeline.storage.ingress import (
     object_identity,
     safe_destination,
 )
-from sqlalchemy import event, select
+from sqlalchemy import create_engine, delete, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -98,10 +99,6 @@ class FakeCompletedSource:
         self.lookups.append(digest)
         return self.run
 
-    def reconcile_by_sha256(self, digest: str) -> CompletedRun | None:
-        """Return a completed record or fail closed when lookup fails."""
-        return self.by_sha256(digest)
-
 
 class RecordingPublisher:
     """Collect outbox events as a broker confirmation test double."""
@@ -151,150 +148,56 @@ def test_ingress_identity_destination_and_deduplication(
         assert len(row.sha256) == 64
 
 
-def test_historical_completed_object_is_not_published(
+def test_completed_historical_object_is_skipped(
     sessions, tmp_path: Path
 ) -> None:
-    """Verified historical bytes are reconciled without publication."""
+    """A verified upstream completion never enters the watched directory."""
     metadata = ObjectMetadata('sinan', 'DENGUE (3).csv', 15, 'etag')
     store = FakeStore([metadata])
     digest = hashlib.sha256(store.payload).hexdigest()
     run_id = uuid4()
-    run = CompletedRun(
-        run_id=run_id,
-        status='completed',
-        uf='MG',
-        disease='A90',
-        delivery_se=202644,
-        sha256=digest,
-        finished_at=datetime.now(timezone.utc),
-        canonical_cid10='A90',
-    )
     root = tmp_path / 'incoming'
     coordinator = IngressCoordinator(
         sessions,
         store,
         root,
         completed_run_for_sha256=lambda value: (
-            run if value == digest else None
+            run_id if value == digest else None
         ),
     )
-
     assert coordinator.scan() == 0
-    assert not safe_destination(root, metadata).exists()
+    assert list(root.iterdir()) == []
+    assert coordinator.scan() == 0
+    assert store.downloads == [metadata.key]
     with sessions() as session:
         row = session.scalar(select(IngressObjectRow))
         assert row is not None
-        assert row.status is IngressStatus.RECONCILED
+        assert row.status is IngressStatus.SKIPPED
         assert row.sha256 == digest
         assert row.run_id == run_id
-        assert row.canonical_cid10 == 'A90'
-        assert row.delivery_se == 202644
-        assert row.run_finished_at == run.finished_at.replace(tzinfo=None)
-        assert row.reconciled_at is not None
-        assert row.last_error is None
-        assert session.scalar(select(OutboxEventRow)) is None
-    assert coordinator.scan() == 0
-    assert store.downloads == [metadata.key]
-
-
-def test_explicit_historical_reconciliation_never_publishes_or_emits(
-    sessions, tmp_path: Path
-) -> None:
-    """The operator operation records history only and is idempotent."""
-    metadata = ObjectMetadata('sinan', 'CHIKUNGUNYA (4).csv', 15, 'etag')
-    store = FakeStore([metadata])
-    digest = hashlib.sha256(store.payload).hexdigest()
-    run = CompletedRun(
-        run_id=uuid4(),
-        status='completed',
-        uf='BR',
-        disease='A92',
-        delivery_se=202644,
-        sha256=digest,
-        finished_at=datetime.now(timezone.utc),
-        canonical_cid10='A92.0',
-    )
-    incoming = tmp_path / 'incoming'
-    coordinator = IngressCoordinator(
-        sessions,
-        store,
-        incoming,
-        completed_run_for_sha256=lambda _digest: run,
-    )
-
-    assert coordinator.reconcile_historical([metadata.key]) == 1
-    assert coordinator.reconcile_historical([metadata.key]) == 0
-    assert not incoming.exists()
-    assert list(tmp_path.glob('.incoming-staging/*')) == []
-    with sessions() as session:
-        row = session.scalar(select(IngressObjectRow))
-        assert row is not None and row.status is IngressStatus.RECONCILED
-        assert row.canonical_cid10 == 'A92.0'
-        assert row.delivery_se == 202644
-        assert row.run_id == run.run_id
         assert session.scalar(select(OutboxEventRow)) is None
 
 
-def test_unknown_reconciliation_preserves_interrupted_publication(
+def test_source_lookup_failure_never_publishes(
     sessions, tmp_path: Path
 ) -> None:
-    """A history-only scan cannot discard another scan's prepared file."""
-    metadata = ObjectMetadata('sinan', 'pending.csv', 15, 'etag')
-    store = FakeStore([metadata])
-    digest = hashlib.sha256(store.payload).hexdigest()
-    incoming = tmp_path / 'incoming'
-    destination = safe_destination(incoming, metadata)
-    prepared = tmp_path / '.incoming-staging' / destination.name
-    prepared.parent.mkdir()
-    prepared.write_bytes(store.payload)
-    with sessions.begin() as session:
-        session.add(
-            IngressObjectRow(
-                object_id=uuid4(),
-                bucket=metadata.bucket,
-                object_key=metadata.key,
-                object_identity=object_identity(metadata),
-                etag=metadata.etag,
-                version_id=metadata.version_id,
-                size=metadata.size,
-                sha256=digest,
-                destination=str(destination),
-                status=IngressStatus.DISCOVERED,
-            )
-        )
-    coordinator = IngressCoordinator(
-        sessions,
-        store,
-        incoming,
-        completed_run_for_sha256=lambda _digest: None,
-    )
+    """Source availability is required before exposing downloaded bytes."""
+    metadata = ObjectMetadata('sinan', 'DENGUE (3).csv', 15, 'etag')
 
-    assert coordinator.reconcile_historical([metadata.key]) == 0
-    assert prepared.read_bytes() == store.payload
-    assert not incoming.exists()
-    with sessions() as session:
-        row = session.scalar(select(IngressObjectRow))
-        assert row is not None and row.status is IngressStatus.DISCOVERED
-
-
-def test_ingress_fails_closed_when_historical_lookup_is_unavailable(
-    sessions, tmp_path: Path
-) -> None:
-    """A source failure never publishes a verified download."""
-    metadata = ObjectMetadata('sinan', 'historical.csv', 15, 'etag')
-    store = FakeStore([metadata])
-
-    def unavailable(_digest: str):
-        raise OSError('source database unavailable')
+    def unavailable(_digest: str) -> None:
+        raise OSError('source unavailable')
 
     root = tmp_path / 'incoming'
     assert (
         IngressCoordinator(
-            sessions, store, root, completed_run_for_sha256=unavailable
+            sessions,
+            FakeStore([metadata]),
+            root,
+            completed_run_for_sha256=unavailable,
         ).scan()
         == 0
     )
-    assert not safe_destination(root, metadata).exists()
+    assert list(root.iterdir()) == []
     with sessions() as session:
         row = session.scalar(select(IngressObjectRow))
         assert row is not None and row.status is IngressStatus.FAILED
@@ -498,103 +401,37 @@ def test_staging_rejects_incoming_bind_mount(
         IngressCoordinator(sessions, FakeStore([metadata]), root).scan()
 
 
-def test_concurrent_postgres_scans_publish_once(
-    postgres_sessions: sessionmaker[Session], tmp_path: Path
-) -> None:
+def test_concurrent_postgres_scans_publish_once(tmp_path: Path) -> None:
     """The per-key PostgreSQL lock spans download and publication."""
+    database_url = os.environ.get('INFODENGUE_PIPELINE_TEST_POSTGRES_URL')
+    if not database_url:
+        pytest.skip('dedicated disposable PostgreSQL URL is not configured')
+    engine = create_engine(database_url, pool_pre_ping=True)
+    sessions = sessionmaker(engine, expire_on_commit=False)
     metadata = ObjectMetadata(
         'sinan', f'concurrency-{uuid4()}.csv', 15, 'etag'
     )
     store = FakeStore([metadata])
-    coordinator = IngressCoordinator(
-        postgres_sessions, store, tmp_path / 'incoming'
-    )
+    coordinator = IngressCoordinator(sessions, store, tmp_path / 'incoming')
     barrier = Barrier(2)
 
     def scan() -> int:
         barrier.wait(timeout=5)
         return coordinator.scan()
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _: scan(), range(2)))
-    assert sorted(results) == [0, 1]
-    assert store.downloads == [metadata.key]
-
-
-def test_concurrent_postgres_historical_reconciliation_is_idempotent(
-    postgres_sessions: sessionmaker[Session], tmp_path: Path
-) -> None:
-    """Session advisory locks serialize two real PostgreSQL reconciliations."""
-    metadata = ObjectMetadata('sinan', f'historical-{uuid4()}.csv', 15, 'etag')
-    store = FakeStore([metadata])
-    digest = hashlib.sha256(store.payload).hexdigest()
-    run = CompletedRun(
-        uuid4(),
-        'completed',
-        'MG',
-        'A90',
-        202644,
-        digest,
-        datetime.now(timezone.utc),
-        'A90',
-    )
-    coordinator = IngressCoordinator(
-        postgres_sessions,
-        store,
-        tmp_path / 'incoming',
-        completed_run_for_sha256=lambda _digest: run,
-    )
-    barrier = Barrier(2)
-
-    def reconcile() -> int:
-        barrier.wait(timeout=5)
-        return coordinator.reconcile_historical([metadata.key])
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _: reconcile(), range(2)))
-
-    assert sorted(results) == [0, 1]
-    assert store.downloads == [metadata.key]
-    with postgres_sessions() as session:
-        row = session.scalar(select(IngressObjectRow))
-        assert row is not None
-        assert row.status is IngressStatus.RECONCILED
-        assert row.sha256 == digest
-        assert row.run_id == run.run_id
-        assert session.scalar(select(OutboxEventRow)) is None
-
-
-def test_postgres_ingress_commits_before_external_source_lookup(
-    postgres_sessions: sessionmaker[Session], tmp_path: Path
-) -> None:
-    """Source lookup runs after the row-creation transaction has committed."""
-    metadata = ObjectMetadata('sinan', f'fresh-{uuid4()}.csv', 15, 'etag')
-    store = FakeStore([metadata])
-    identity = object_identity(metadata)
-    observed_statuses: list[IngressStatus | None] = []
-
-    def unknown_source(_digest: str):
-        with postgres_sessions() as session:
-            row = session.scalar(
-                select(IngressObjectRow).where(
-                    IngressObjectRow.object_identity == identity
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: scan(), range(2)))
+        assert sorted(results) == [0, 1]
+        assert store.downloads == [metadata.key]
+    finally:
+        with sessions.begin() as session:
+            session.execute(
+                delete(IngressObjectRow).where(
+                    IngressObjectRow.object_key == metadata.key
                 )
             )
-            observed_statuses.append(row.status if row is not None else None)
-        return None
-
-    coordinator = IngressCoordinator(
-        postgres_sessions,
-        store,
-        tmp_path / 'incoming',
-        completed_run_for_sha256=unknown_source,
-    )
-    assert coordinator.scan() == 1
-    assert observed_statuses == [IngressStatus.DISCOVERED]
-    with postgres_sessions() as session:
-        row = session.scalar(select(IngressObjectRow))
-        assert row is not None
-        assert row.status is IngressStatus.MATERIALIZED
+        engine.dispose()
 
 
 def test_ingress_retries_failed_materialization_and_skips_other_formats(

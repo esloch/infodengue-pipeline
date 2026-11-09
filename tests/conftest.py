@@ -10,7 +10,7 @@ from infodengue_pipeline.db.engine import SqlUnitOfWork
 from infodengue_pipeline.db.models import Base
 from infodengue_pipeline.events import IngestionCompleted
 from infodengue_pipeline.models import Coverage, Disease
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -23,29 +23,6 @@ def sessions() -> Iterator[sessionmaker[Session]]:
     )
     Base.metadata.create_all(engine)
     yield sessionmaker(engine, expire_on_commit=False)
-    engine.dispose()
-
-
-@pytest.fixture
-def postgres_sessions() -> Iterator[sessionmaker[Session]]:
-    """Use a unique disposable PostgreSQL schema when explicitly configured."""
-    import os
-
-    database_url = os.environ.get('INFODENGUE_PIPELINE_TEST_POSTGRES_URL')
-    if not database_url:
-        pytest.skip('isolated development PostgreSQL URL is not configured')
-    engine = create_engine(database_url, pool_pre_ping=True)
-    schema = f'test_pipeline_{uuid4().hex}'
-    with engine.begin() as connection:
-        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-    isolated_engine = engine.execution_options(
-        schema_translate_map={'pipeline': schema}
-    )
-    Base.metadata.create_all(isolated_engine)
-    yield sessionmaker(isolated_engine, expire_on_commit=False)
-    Base.metadata.drop_all(isolated_engine)
-    with engine.begin() as connection:
-        connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
     engine.dispose()
 
 

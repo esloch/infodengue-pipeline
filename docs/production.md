@@ -36,256 +36,6 @@ analysis database role. The analysis role stays read-only while `load=false`.
 Keep the pipeline PostgreSQL, RabbitMQ, source DB, analysis DB, and MinIO
 credentials separate.
 
-## Mosqserver ownership and initial ingress gate
-
-Production MinIO is `minio:9000`, bucket `sinan-infodengue`, on
-`infodengue-prod_infodengue`. Its current SINAN namespace is the bucket root.
-The current `mc mirror --watch` materializer mirrors that whole root, so a
-dedicated prefix is not the present ownership contract. The selected cutover
-replaces the root materializer under operator control: only one active
-materializer may publish this namespace into
-`/Storage/infodengue_data/sinan/incoming`. Do not run the pipeline scanner
-alongside the legacy root mirror. `mc mirror --exclude` can filter object
-paths, but an exclusion is safe only after validating the exact installed
-`mc` version and pattern behavior against root keys; no production MinIO
-configuration is changed by this repository.
-
-Before starting workers or Beat, run the explicit historical reconciliation
-command for the two approved keys. It downloads each object into private
-staging, verifies SHA-256, validates the read-only `ingestion.run` record,
-and records a `reconciled` ingress row. It does not create the watched
-incoming directory, publish a file, create an outbox event, or dispatch
-analysis. Source unavailability, an incomplete or ambiguous source record,
-or invalid metadata prevents reconciliation. Running this command is the
-pre-scanner acceptance step; the scanner itself retains the same fail-closed
-SHA check as a defense in depth.
-
-The verified production hashes are `848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd`
-for Dengue and `bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58`
-for Chikungunya. Before scanner authorization, compare downloaded bytes,
-source rows and reconciled rows against those values. These read-only queries
-prove source completion and local reconciliation; run them through the
-approved read-only source and pipeline connections respectively:
-
-```sql
-SELECT id, status, disease, canonical_cid10, delivery_se, sha256,
-       finished_at
-FROM ingestion.run
-WHERE sha256 IN (
-  '848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd',
-  'bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58'
-);
-
-SELECT object_key, status, sha256, run_id, canonical_cid10, delivery_se,
-       run_finished_at, reconciled_at
-FROM pipeline.ingress_object
-WHERE sha256 IN (
-  '848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd',
-  'bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58'
-);
-```
-
-The source query must return exactly one `completed` row per hash with the
-expected canonical disease and run UUID. After explicit reconciliation the
-pipeline query must show both hashes as `reconciled`, with matching run UUIDs,
-canonical CID-10, and delivery week 202644. Confirm neither retained file is
-present in `/Storage/infodengue_data/sinan/incoming`. These checks happen
-before scanner or Beat startup, removing the previous circular gate.
-
-### SE 202644 acceptance criteria
-
-Accept reconciliation only when all of these checks pass:
-
-- `DENGUE (3).csv` hashes to
-  `848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd` and
-  has exactly one completed source run with canonical CID-10 `A90`, delivery
-  week `202644`, a valid UUID and a non-null completion timestamp.
-- `CHIKUNGUNYA (4).csv` hashes to
-  `bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58` and
-  has exactly one completed source run with canonical CID-10 `A92.0`, delivery
-  week `202644`, a valid UUID and a non-null completion timestamp.
-- Each pipeline row is `reconciled`, with the exact object SHA, source run UUID,
-  canonical disease, delivery week, completion timestamp and reconciliation
-  timestamp. Re-running the command returns zero newly reconciled rows and
-  preserves the same metadata.
-- A before/after manifest of `/Storage/infodengue_data/sinan/incoming` is
-  unchanged. Outbox-event and analysis-job counts are unchanged by the
-  reconciliation command. Scanner and Beat remain stopped during these checks.
-- After the scanner is separately enabled, repeated scans leave both rows
-  `reconciled`; neither key is materialized into incoming and no duplicate
-  AlertaDengue run is created.
-
-Historical reconciliation and scientific event bootstrap are separate
-operations. The command records auditable metadata only and never creates
-events. This repository does not provide an event-bootstrap command. If
-historical inputs are later approved for workflow readiness, that must be a
-separate reviewed change with an explicit week allowlist, audited event IDs,
-outbox idempotency and proof that dispatch remains disabled. Preserve the
-`reconciled` row and source metadata. Fresh hashes continue through normal
-materialization, watcher, completion bridge, outbox, readiness, and analysis.
-
-Atomic publication requires `/var/lib/pipeline/.incoming-staging` and
-`/var/lib/pipeline/incoming` to be on the same filesystem. The production
-Compose bind maps the parent of the host incoming path to `/var/lib/pipeline`;
-it intentionally does not mount canonical StorageBox. The image runs as the
-`pipeline` user, default UID/GID 1000 unless the image is built with different
-`HOST_UID`/`HOST_GID`; provision the host directory for that identity with
-directory traversal/write access. The scanner sets staging mode 0700 and file
-mode 0640. Keep analysis output on its own persistent writable host directory.
-Compose operational ports bind only to loopback; workers depend on healthy
-pipeline PostgreSQL, successful migration, and healthy RabbitMQ. Beat is a
-single service and must remain stopped until the shadow gate below passes.
-
-## Database least privilege and verification
-
-Use separate roles and URLs for pipeline operational PostgreSQL,
-AlertaDengue's `ingestion.run` source, and the scientific analysis database.
-The source role needs schema usage and `SELECT` only on the run fields queried
-by the adapter (`id`, `status`, `uf`, `disease`, `canonical_cid10`,
-`delivery_se`, `sha256`, and `finished_at`). The analysis role needs only
-read access while `INFODENGUE_PIPELINE_ANALYSIS_LOAD=false`; provision any
-write grants only as a separate approved change when load is authorized.
-Role names do not prove effective permissions. Verify using the actual
-connection roles and inspect `has_table_privilege` / `has_column_privilege`
-and effective grants, including inherited role memberships. Do not print
-connection URLs or grant output containing secrets. Provision grants through
-the database owner using deployment-managed SQL; never change AlertaDengue
-Django schemas from this repository.
-
-Run these checks while connected as the configured source role and then as
-the analysis role (the table names are the source ingestion table and the
-scientific tables required by the reviewed analysis image):
-
-```sql
-SELECT current_user,
-       has_schema_privilege(current_user, 'ingestion', 'USAGE')
-         AS source_schema_usage,
-       has_table_privilege(current_user, 'ingestion.run', 'SELECT')
-         AS source_select,
-       has_table_privilege(current_user, 'ingestion.run', 'INSERT')
-         AS source_insert,
-       has_table_privilege(current_user, 'ingestion.run', 'UPDATE')
-         AS source_update,
-       has_table_privilege(current_user, 'ingestion.run', 'DELETE')
-         AS source_delete,
-       has_column_privilege(
-         current_user, 'ingestion.run', 'canonical_cid10', 'SELECT'
-       ) AS canonical_cid10_select;
-```
-
-Source results must show schema usage and required column reads, with no
-source write privileges. Repeat the DML privilege checks for every scientific
-table used by the analysis image; all must be false while load is disabled.
-Then inspect inherited grants as the database owner (`\du+` and
-`information_schema.role_table_grants`) because effective privileges can be
-inherited. The owning DBA should provision only the source schema usage and
-column-scoped SELECT required by the adapter, and analysis SELECT grants for
-shadow mode; use a separate reviewed DBA change for scientific write grants.
-Do not put passwords or role credentials in SQL files or command history.
-
-## Mosqserver deployment gates
-
-Run each command below only after setting the shell variables from the
-reviewed private environment files. Inspection commands are labeled
-**inspect**; commands that change service state are labeled **change**.
-Do not use `compose up` for the initial deployment: it would start Beat before
-reconciliation and shadow authorization.
-
-1. **Inspect** reviewed source and analysis image provenance. Both image
-   references must use immutable reviewed SHA-256 digests, and the core and
-   analysis image settings must agree. Confirm private files are mode 0600;
-   required pipeline PostgreSQL, RabbitMQ, MinIO, source DB and analysis DB
-   secrets are provisioned separately. Rotate no existing credentials as
-   part of this rollout.
-2. **Inspect** MinIO endpoint, bucket, root namespace, retained objects and
-   ownership. Verify that no other materializer will publish the same root
-   namespace when the new scanner is enabled. Confirm both retained files by
-   fetching them read-only and comparing against SHA-256 values in the
-   incident record. Never include object contents or credentials in logs.
-3. **Inspect** AlertaDengue source records by SHA-256. Confirm a single
-   `completed` run, non-null completion timestamp, run UUID and canonical
-   disease for each retained object. The explicit reconciliation command's
-   durable rows are the cutover proof; do not manually insert ingress records.
-4. **Inspect** effective DB grants as described above. Run the production
-   validator from the appropriate isolated worker role, and check source DB
-   availability before scanner startup. The source connection is read-only.
-5. **Inspect** the scientific database's latest persisted week and any active
-   legacy analysis process. Production currently has historical alert tables
-   through SE 202643 and completed deliveries through 202644; these facts do
-   not determine the first eligible scientific week. Choose and document that
-   week from database state and active-run inspection, then put the same
-   `INFODENGUE_PIPELINE_ANALYSIS_INITIAL_EPIWEEK` in core and analysis files.
-   Keep `INFODENGUE_PIPELINE_ANALYSIS_LOAD=false` in both.
-6. **Inspect** capacity, incoming and output ownership, and existing
-   PostgreSQL/RabbitMQ recovery plans. Take a PostgreSQL backup and prove it
-   restores into an isolated disposable database. Verify RabbitMQ persistent
-   data and recovery instructions. Confirm StorageBox free space and incoming
-   filesystem permissions. Never test restore against an active shared DB.
-7. **Change** watcher ownership only in a coordinated quiet window: verify the
-   existing watcher is healthy, stop duplicate watcher processes, then have
-   the existing AlertaDengue watcher continue to own canonical validation,
-   stage/merge, movement and rollback. Do not replace watcher behavior.
-8. **Change** legacy materializer ownership only after verifying it is idle
-   and its pending transfers are complete. Retire the legacy root mirror
-   before enabling the pipeline scanner. Do not alter MinIO credentials or
-   configuration during this code deployment.
-9. **Change** apply the reviewed pipeline migrations. Then run the explicit
-   historical reconciliation command while the scanner and Beat remain
-   stopped. It records database state only and cannot dispatch analysis:
-
-   ```sh
-   docker compose --env-file .envs/.env.prod \
-     -f containers/compose-prod.yaml run --rm migrate
-   docker compose --env-file .envs/.env.prod \
-     -f containers/compose-prod.yaml run --rm --no-deps worker-ingestion \
-     python -m infodengue_pipeline reconcile-historical \
-     --object-key 'DENGUE (3).csv' \
-     --object-key 'CHIKUNGUNYA (4).csv' \
-     --confirm historical-only
-   ```
-
-   Verify the two `reconciled` rows and run metadata with the SQL above; verify
-   both files remain absent from incoming and that no outbox event or analysis
-   job was created by reconciliation. Only then **change** start non-scheduling
-   workers with Beat stopped. This proves the retained SE 202644 objects
-   cannot be republished at scanner startup.
-10. **Inspect** shadow mode with load disabled. Confirm fresh objects follow
-    the normal watcher and outbox path, no duplicate legacy consumer is active,
-    and candidate workflow weeks agree with the approved initial week. Do not
-    bootstrap historical events or start Beat during this review.
-11. **Change** start the single Beat service only after separate shadow-mode
-    authorization. Keep scientific load disabled. Enabling `load=true` needs
-    explicit scientific-owner authorization, a reviewed analysis role with
-    required grants, an approved week, a fresh backup/restore check, and
-    confirmation that no legacy analysis is running.
-12. **Inspect** post-cutover rows, watcher logs, object/run hashes, event IDs,
-    job IDs, output artifacts, backup status and error logs. Confirm secrets
-    never appeared in expanded container commands or logs.
-
-### MinIO runtime credential remediation
-
-Production inspection found administrative MinIO credentials expanded in the
-legacy materializer's Docker entrypoint. Treat this as a security finding.
-Provision a dedicated read-only runtime account scoped to bucket listing and
-object reads for the owned namespace, then update the materializer through a
-coordinated credential handoff. Keep credentials in a protected environment
-file or secret facility rather than command arguments; suppress rendered
-Compose configuration and entrypoint output from logs. Rotate the old
-administrative credentials only in a separately scheduled change after the
-new account is verified and every consumer has moved. This repository does not
-rotate credentials or modify production MinIO.
-
-### Rollback
-
-Stop Beat first, then stop scanner and pipeline workers. Leave pipeline
-PostgreSQL, RabbitMQ, ingress rows, outbox rows, logs and analysis artifacts
-intact for diagnosis. Re-enable the legacy materializer only after proving the
-pipeline scanner is stopped and the legacy watcher remains the sole canonical
-ingestion owner. Do not remove or overwrite canonical files. For any rollback
-that affects source or scientific DB state, use the reviewed isolated restore
-and recovery procedure; do not replay a potentially mutating analysis without
-operator review.
-
 ## Production topology
 
 The project `infodengue-pipeline-prod` has PostgreSQL, RabbitMQ, a finite
@@ -296,6 +46,37 @@ Celery concurrency one; keep ingestion at one replica. Ingestion, events,
 orchestration, and analysis join the configured integration network. Beat
 remains on the default network. No worker mounts a sibling checkout or Docker
 socket.
+
+## Retained SINAN objects at first startup
+
+Production MinIO retains `DENGUE (3).csv` and `CHIKUNGUNYA (4).csv` in the
+`sinan-infodengue` bucket root. Before the pipeline scanner runs, verify the
+read-only AlertaDengue source connection and the completed `ingestion.run`
+records for their known SHA-256 values:
+
+| Object | SHA-256 | Canonical CID-10 | Delivery week |
+| --- | --- | --- | --- |
+| `DENGUE (3).csv` | `848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd` | `A90` | `202644` |
+| `CHIKUNGUNYA (4).csv` | `bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58` | `A92.0` | `202644` |
+
+The scanner verifies downloaded bytes by SHA-256 before the publication
+step. A matching completed run is recorded as `skipped` with its upstream
+`run_id`; no file is placed in incoming. Missing source access or invalid
+completed-run metadata fails closed. Keep the legacy root-level MinIO
+materializer stopped before enabling this scanner so only one materializer
+owns the bucket root. Keep Beat stopped for the first controlled scan. With
+`worker-ingestion` running, enqueue one scan and wait for it to finish:
+
+```sh
+docker compose --env-file .envs/.env.prod -f containers/compose-prod.yaml \
+  exec worker-ingestion celery -A \
+  infodengue_pipeline.messaging.celery:celery_app call pipeline.ingestion.scan
+```
+
+Query `pipeline.ingress_object` for both hashes and verify `skipped` status,
+matching run IDs, and no new files in the watched incoming directory. Only
+then enable periodic scanning. Skipped rows create no historical completion
+events or scientific jobs.
 
 ## Staging-host rehearsal
 

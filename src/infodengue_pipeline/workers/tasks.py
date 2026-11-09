@@ -136,11 +136,9 @@ def scan_ingress() -> int:
             )
         completed_run_for_sha256 = None
     else:
-        source = _completed_source(
+        completed_run_for_sha256 = _completed_source(
             settings.alerta_source_database_url.get_secret_value()
-        )
-        completed_run_for_sha256 = source.reconcile_by_sha256
-
+        ).completed_run_id_by_sha256
     return IngressCoordinator(
         session_factory(),
         build_object_store(settings),
