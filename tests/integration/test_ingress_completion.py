@@ -9,7 +9,7 @@ from pathlib import Path
 from stat import S_IMODE
 from threading import Barrier
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
 
@@ -301,6 +301,125 @@ def test_prepared_file_recovers_after_publication_failure(
     assert store.downloads == [metadata.key]
     assert S_IMODE(safe_destination(root, metadata).stat().st_mode) == 0o640
     assert S_IMODE(staged.parent.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize('already_published', [False, True])
+def test_prepared_recovery_skips_completed_upstream_run(
+    sessions, tmp_path: Path, already_published: bool
+) -> None:
+    """History check prevents replay and preserves a published file."""
+    metadata = ObjectMetadata('sinan', 'historical.csv', 15, 'etag')
+    store = FakeStore([metadata])
+    root = tmp_path / 'incoming'
+    root.mkdir()
+    destination = safe_destination(root, metadata)
+    staged = tmp_path / '.incoming-staging' / destination.name
+    staged.parent.mkdir()
+    (destination if already_published else staged).write_bytes(store.payload)
+    digest = hashlib.sha256(store.payload).hexdigest()
+    run_id = uuid4()
+    with sessions.begin() as session:
+        session.add(
+            IngressObjectRow(
+                object_id=uuid5(NAMESPACE_URL, object_identity(metadata)),
+                bucket=metadata.bucket,
+                object_key=metadata.key,
+                object_identity=object_identity(metadata),
+                etag=metadata.etag,
+                version_id=metadata.version_id,
+                size=metadata.size,
+                sha256=digest,
+                destination=str(destination),
+                status=IngressStatus.DISCOVERED,
+            )
+        )
+    coordinator = IngressCoordinator(
+        sessions,
+        store,
+        root,
+        completed_run_for_sha256=lambda value: (
+            run_id if value == digest else None
+        ),
+    )
+    assert coordinator.scan() == 0
+    assert not staged.exists()
+    assert destination.exists() is already_published
+    if already_published:
+        assert destination.read_bytes() == store.payload
+    assert store.downloads == []
+    with sessions() as session:
+        row = session.scalar(select(IngressObjectRow))
+        assert row is not None
+        assert row.status is IngressStatus.SKIPPED
+        assert row.sha256 == digest
+        assert row.run_id == run_id
+
+
+@pytest.mark.parametrize(
+    'lookup_error',
+    [OSError('source unavailable'), ValueError('invalid completed run')],
+)
+def test_prepared_recovery_waits_for_source_then_publishes_fresh(
+    sessions, tmp_path: Path, lookup_error: Exception
+) -> None:
+    """Lookup failure keeps the prepared bytes available for a safe retry."""
+    metadata = ObjectMetadata('sinan', 'fresh.csv', 15, 'etag')
+    store = FakeStore([metadata])
+    root = tmp_path / 'incoming'
+    root.mkdir()
+    destination = safe_destination(root, metadata)
+    staged = tmp_path / '.incoming-staging' / destination.name
+    staged.parent.mkdir()
+    staged.write_bytes(store.payload)
+    digest = hashlib.sha256(store.payload).hexdigest()
+    with sessions.begin() as session:
+        session.add(
+            IngressObjectRow(
+                object_id=uuid5(NAMESPACE_URL, object_identity(metadata)),
+                bucket=metadata.bucket,
+                object_key=metadata.key,
+                object_identity=object_identity(metadata),
+                etag=metadata.etag,
+                version_id=metadata.version_id,
+                size=metadata.size,
+                sha256=digest,
+                destination=str(destination),
+                status=IngressStatus.DISCOVERED,
+            )
+        )
+
+    def unavailable(_digest: str) -> None:
+        raise lookup_error
+
+    assert (
+        IngressCoordinator(
+            sessions,
+            store,
+            root,
+            completed_run_for_sha256=unavailable,
+        ).scan()
+        == 0
+    )
+    assert staged.read_bytes() == store.payload
+    assert not destination.exists()
+    with sessions() as session:
+        row = session.scalar(select(IngressObjectRow))
+        assert row is not None
+        assert row.status is IngressStatus.DISCOVERED
+        assert row.sha256 == digest
+        assert row.last_error is not None
+
+    assert (
+        IngressCoordinator(
+            sessions,
+            store,
+            root,
+            completed_run_for_sha256=lambda _digest: None,
+        ).scan()
+        == 1
+    )
+    assert destination.read_bytes() == store.payload
+    assert store.downloads == []
 
 
 @pytest.mark.parametrize('watcher_moves', [False, True])

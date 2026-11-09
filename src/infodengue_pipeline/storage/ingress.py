@@ -132,12 +132,41 @@ class IngressCoordinator:
                     )
                     session.add(row)
                     session.flush()
-                if row.status is IngressStatus.DISCOVERED and row.sha256:
+                digest = row.sha256
+                if row.status is IngressStatus.DISCOVERED and digest:
                     logger.info(
                         'ingress_prepared_recovery',
                         object_id=str(object_id),
                         object_key=metadata.key,
                     )
+                    try:
+                        run_id = (
+                            self._completed_run_for_sha256(digest)
+                            if self._completed_run_for_sha256 is not None
+                            else None
+                        )
+                        if run_id is not None:
+                            staged.unlink(missing_ok=True)
+                            row.run_id = run_id
+                            row.status = IngressStatus.SKIPPED
+                            row.last_error = None
+                            logger.info(
+                                'ingress_historical_completion_skipped',
+                                object_id=str(object_id),
+                                object_key=metadata.key,
+                                sha256=digest,
+                                run_id=str(run_id),
+                            )
+                            continue
+                    except Exception as exc:
+                        row.last_error = str(exc)[:512]
+                        logger.error(
+                            'ingress_recovery_verification_failed',
+                            object_id=str(object_id),
+                            object_key=metadata.key,
+                            error_type=type(exc).__name__,
+                        )
+                        continue
                 else:
                     try:
                         materialized = self._store.materialize(
