@@ -182,6 +182,7 @@ class IngressStatus(StrEnum):
     INGESTED = 'ingested'
     FAILED = 'failed'
     SKIPPED = 'skipped'
+    RECONCILED = 'reconciled'
 
 
 class IngressObjectRow(Base):
@@ -215,6 +216,14 @@ class IngressObjectRow(Base):
         nullable=False,
     )
     run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    canonical_cid10: Mapped[str | None] = mapped_column(String(8))
+    delivery_se: Mapped[int | None] = mapped_column(Integer)
+    run_finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

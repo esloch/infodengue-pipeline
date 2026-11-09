@@ -1,5 +1,7 @@
 """Read-only AlertaDengue completion boundary and idempotent event bridge."""
 
+import re
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
@@ -76,6 +78,10 @@ class PostgresCompletedIngestionSource:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
+    def close(self) -> None:
+        """Dispose the source connection pool for one-shot operator use."""
+        self._engine.dispose()
+
     def exists_sha256(self, digest: str) -> bool:
         """Read whether any upstream run, regardless of status, owns a SHA."""
         with self._engine.connect() as connection:
@@ -94,7 +100,7 @@ class PostgresCompletedIngestionSource:
         """Return the current upstream run status for this SHA."""
         with self._engine.connect() as connection:
             connection.execute(text('SET TRANSACTION READ ONLY'))
-            row = (
+            rows = (
                 connection.execute(
                     text(
                         'SELECT status FROM ingestion.run '
@@ -103,15 +109,17 @@ class PostgresCompletedIngestionSource:
                     {'sha256': digest},
                 )
                 .mappings()
-                .first()
+                .all()
             )
-        return str(row['status']) if row is not None else None
+        if len(rows) > 1:
+            raise ValueError('multiple AlertaDengue runs share one SHA-256')
+        return str(rows[0]['status']) if rows else None
 
     def by_sha256(self, digest: str) -> CompletedRun | None:
         """Read one completed run by the unique file SHA-256."""
         with self._engine.connect() as connection:
             connection.execute(text('SET TRANSACTION READ ONLY'))
-            row = (
+            rows = (
                 connection.execute(
                     text(
                         'SELECT id, status, uf, disease, canonical_cid10, '
@@ -122,10 +130,13 @@ class PostgresCompletedIngestionSource:
                     {'sha256': digest, 'status': 'completed'},
                 )
                 .mappings()
-                .first()
+                .all()
             )
-        if row is None:
+        if len(rows) > 1:
+            raise ValueError('multiple completed runs share one SHA-256')
+        if not rows:
             return None
+        row = rows[0]
         finished_at = row['finished_at']
         if finished_at is None:
             return None
@@ -153,16 +164,59 @@ class PostgresCompletedIngestionSource:
         effects are still in progress or need operator recovery. Publishing
         the same bytes again could duplicate those effects.
         """
-        run = self.by_sha256(digest)
-        if run is not None:
-            return run
-        status = self.status_by_sha256(digest)
-        if status is not None:
+        statuses = self._statuses_by_sha256(digest)
+        if not statuses:
+            return None
+        if len(statuses) > 1:
+            raise ValueError('multiple AlertaDengue runs share one SHA-256')
+        if statuses[0] != 'completed':
             raise RuntimeError(
                 'matching AlertaDengue ingestion exists without a verifiable '
-                f'completed record (status={status})'
+                f'completed record (status={statuses[0]})'
             )
-        return None
+        run = self.by_sha256(digest)
+        if run is not None:
+            if run.sha256 != digest:
+                raise ValueError('completed run SHA-256 does not match object')
+            if run.status != 'completed':
+                raise ValueError('historical run is not completed')
+            if not re.fullmatch(r'[0-9a-f]{64}', run.sha256):
+                raise ValueError('completed run SHA-256 is invalid')
+            if run.canonical_cid10 is None:
+                raise ValueError('completed run lacks canonical CID-10')
+            disease = resolve_run_disease(run.disease, run.canonical_cid10)
+            if disease.canonical_cid10 != run.canonical_cid10.upper():
+                raise ValueError('completed run CID-10 is not canonical')
+            Epiweek.parse(run.delivery_se)
+            Coverage(run.uf)
+            if (
+                run.finished_at.tzinfo is None
+                or run.finished_at.utcoffset() is None
+            ):
+                raise ValueError(
+                    'completed run timestamp is not timezone aware'
+                )
+            return run
+        raise RuntimeError(
+            'completed AlertaDengue ingestion has no verifiable run metadata'
+        )
+
+    def _statuses_by_sha256(self, digest: str) -> list[str]:
+        """Read all matching source states in a short read-only transaction."""
+        with self._engine.connect() as connection:
+            connection.execute(text('SET TRANSACTION READ ONLY'))
+            rows = (
+                connection.execute(
+                    text(
+                        'SELECT status FROM ingestion.run '
+                        'WHERE sha256 = :sha256'
+                    ),
+                    {'sha256': digest},
+                )
+                .mappings()
+                .all()
+            )
+        return [str(row['status']) for row in rows]
 
 
 class IngestionCompletionBridge:

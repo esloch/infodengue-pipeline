@@ -50,23 +50,20 @@ paths, but an exclusion is safe only after validating the exact installed
 `mc` version and pattern behavior against root keys; no production MinIO
 configuration is changed by this repository.
 
-Before enabling scanning, use the pipeline image and staging-only resources to
-verify the completed-run source connection, then perform a dry readiness
-review against the two retained production object hashes supplied in the
-deployment record. The scanner downloads each object to a private staging
-directory, verifies its bytes by SHA-256, and checks the read-only
-`ingestion.run` source. A completed match is committed locally as `skipped`
-with its run UUID and is never exposed in incoming. Source unavailability,
-an incomplete source record, or a content mismatch prevents publication.
-Do not start the scanner until operators have verified the object hash, the
-matching completed source record, and the resulting skipped row for both
-`DENGUE (3).csv` and `CHIKUNGUNYA (4).csv`. Existing source disease values
-must resolve to canonical CID-10 (`A90` and `A92.0`, respectively).
+Before starting workers or Beat, run the explicit historical reconciliation
+command for the two approved keys. It downloads each object into private
+staging, verifies SHA-256, validates the read-only `ingestion.run` record,
+and records a `reconciled` ingress row. It does not create the watched
+incoming directory, publish a file, create an outbox event, or dispatch
+analysis. Source unavailability, an incomplete or ambiguous source record,
+or invalid metadata prevents reconciliation. Running this command is the
+pre-scanner acceptance step; the scanner itself retains the same fail-closed
+SHA check as a defense in depth.
 
 The verified production hashes are `848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd`
 for Dengue and `bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58`
 for Chikungunya. Before scanner authorization, compare downloaded bytes,
-source rows and skipped rows against those values. These read-only queries
+source rows and reconciled rows against those values. These read-only queries
 prove source completion and local reconciliation; run them through the
 approved read-only source and pipeline connections respectively:
 
@@ -79,7 +76,8 @@ WHERE sha256 IN (
   'bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58'
 );
 
-SELECT object_key, status, sha256, run_id
+SELECT object_key, status, sha256, run_id, canonical_cid10, delivery_se,
+       run_finished_at, reconciled_at
 FROM pipeline.ingress_object
 WHERE sha256 IN (
   '848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd',
@@ -88,20 +86,43 @@ WHERE sha256 IN (
 ```
 
 The source query must return exactly one `completed` row per hash with the
-expected canonical disease and run UUID. After the first scanner pass the
-pipeline query must show both hashes as `skipped`, each with the matching
-source `run_id`. Also confirm neither retained file is present in
-`/Storage/infodengue_data/sinan/incoming`. Do not enable periodic scanning if
-any check is missing or differs.
+expected canonical disease and run UUID. After explicit reconciliation the
+pipeline query must show both hashes as `reconciled`, with matching run UUIDs,
+canonical CID-10, and delivery week 202644. Confirm neither retained file is
+present in `/Storage/infodengue_data/sinan/incoming`. These checks happen
+before scanner or Beat startup, removing the previous circular gate.
 
-Skipped historical objects do not create completion events or analysis jobs.
-This is deliberate: adopting historical workflow inputs is a separate
-operator-approved action after the scientific cursor and legacy analysis
-activity have been reviewed. No automatic historical event bootstrap is
-provided, so startup cannot enqueue an old analysis backlog. Preserve both
-the upstream `run_id` and skipped ingress evidence for audit. New hashes use
-the normal materialization, watcher, completion bridge, outbox, readiness,
-and analysis flow.
+### SE 202644 acceptance criteria
+
+Accept reconciliation only when all of these checks pass:
+
+- `DENGUE (3).csv` hashes to
+  `848de6b612bf18b51a6f8e773075cde5b67ccf50634941cb960035370075e7fd` and
+  has exactly one completed source run with canonical CID-10 `A90`, delivery
+  week `202644`, a valid UUID and a non-null completion timestamp.
+- `CHIKUNGUNYA (4).csv` hashes to
+  `bb385388ea60ae0be7781ae22bb1c293aa0e72c153ff64359d60b56684081b58` and
+  has exactly one completed source run with canonical CID-10 `A92.0`, delivery
+  week `202644`, a valid UUID and a non-null completion timestamp.
+- Each pipeline row is `reconciled`, with the exact object SHA, source run UUID,
+  canonical disease, delivery week, completion timestamp and reconciliation
+  timestamp. Re-running the command returns zero newly reconciled rows and
+  preserves the same metadata.
+- A before/after manifest of `/Storage/infodengue_data/sinan/incoming` is
+  unchanged. Outbox-event and analysis-job counts are unchanged by the
+  reconciliation command. Scanner and Beat remain stopped during these checks.
+- After the scanner is separately enabled, repeated scans leave both rows
+  `reconciled`; neither key is materialized into incoming and no duplicate
+  AlertaDengue run is created.
+
+Historical reconciliation and scientific event bootstrap are separate
+operations. The command records auditable metadata only and never creates
+events. This repository does not provide an event-bootstrap command. If
+historical inputs are later approved for workflow readiness, that must be a
+separate reviewed change with an explicit week allowlist, audited event IDs,
+outbox idempotency and proof that dispatch remains disabled. Preserve the
+`reconciled` row and source metadata. Fresh hashes continue through normal
+materialization, watcher, completion bridge, outbox, readiness, and analysis.
 
 Atomic publication requires `/var/lib/pipeline/.incoming-staging` and
 `/var/lib/pipeline/incoming` to be on the same filesystem. The production
@@ -183,8 +204,8 @@ reconciliation and shadow authorization.
    incident record. Never include object contents or credentials in logs.
 3. **Inspect** AlertaDengue source records by SHA-256. Confirm a single
    `completed` run, non-null completion timestamp, run UUID and canonical
-   disease for each retained object. The scanner's durable `skipped` rows are
-   the cutover proof; do not manually insert ingress records.
+   disease for each retained object. The explicit reconciliation command's
+   durable rows are the cutover proof; do not manually insert ingress records.
 4. **Inspect** effective DB grants as described above. Run the production
    validator from the appropriate isolated worker role, and check source DB
    availability before scanner startup. The source connection is read-only.
@@ -208,11 +229,26 @@ reconciliation and shadow authorization.
    and its pending transfers are complete. Retire the legacy root mirror
    before enabling the pipeline scanner. Do not alter MinIO credentials or
    configuration during this code deployment.
-9. **Change** start only pipeline dependencies and the migration job, then
-   start non-scheduling workers with Beat stopped. Review the two skipped
-   ingress rows, their content hashes and run UUIDs; confirm neither file
-   appeared in incoming. This proves the retained SE 202644 objects cannot be
-   republished at scanner startup.
+9. **Change** apply the reviewed pipeline migrations. Then run the explicit
+   historical reconciliation command while the scanner and Beat remain
+   stopped. It records database state only and cannot dispatch analysis:
+
+   ```sh
+   docker compose --env-file .envs/.env.prod \
+     -f containers/compose-prod.yaml run --rm migrate
+   docker compose --env-file .envs/.env.prod \
+     -f containers/compose-prod.yaml run --rm --no-deps worker-ingestion \
+     python -m infodengue_pipeline reconcile-historical \
+     --object-key 'DENGUE (3).csv' \
+     --object-key 'CHIKUNGUNYA (4).csv' \
+     --confirm historical-only
+   ```
+
+   Verify the two `reconciled` rows and run metadata with the SQL above; verify
+   both files remain absent from incoming and that no outbox event or analysis
+   job was created by reconciliation. Only then **change** start non-scheduling
+   workers with Beat stopped. This proves the retained SE 202644 objects
+   cannot be republished at scanner startup.
 10. **Inspect** shadow mode with load disabled. Confirm fresh objects follow
     the normal watcher and outbox path, no duplicate legacy consumer is active,
     and candidate workflow weeks agree with the approved initial week. Do not
