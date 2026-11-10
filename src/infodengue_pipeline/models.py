@@ -182,6 +182,21 @@ class AnalysisJobStatus(StrEnum):
     FAILED = 'failed'
 
 
+class BulletinKind(StrEnum):
+    """The finite bulletin renderer supported by this pilot."""
+
+    RECIFE_INTRAMUNICIPAL = 'recife_intramunicipal'
+
+
+class BulletinJobStatus(StrEnum):
+    """Durable lifecycle for a bulletin awaiting a future executor."""
+
+    QUEUED = 'queued'
+    RUNNING = 'running'
+    SUCCEEDED = 'succeeded'
+    FAILED = 'failed'
+
+
 DEFAULT_BR_REQUIRED_DISEASES = frozenset({Disease.DENGUE, Disease.CHIKUNGUNYA})
 DEFAULT_UF_REQUIRED_DISEASES = frozenset({Disease.DENGUE})
 

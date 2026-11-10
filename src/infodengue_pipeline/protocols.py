@@ -52,6 +52,12 @@ class EventPublisher(Protocol):
 class WorkflowRepository(Protocol):
     """Transactional workflow state persistence."""
 
+    def get(
+        self, coverage: Coverage, epiweek: Epiweek
+    ) -> WorkflowSnapshot | None:
+        """Read one coverage and epiweek state without a writer lock."""
+        ...
+
     def get_for_update(
         self, coverage: Coverage, epiweek: Epiweek
     ) -> WorkflowSnapshot | None:

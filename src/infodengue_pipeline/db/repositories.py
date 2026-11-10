@@ -3,7 +3,7 @@
 import hashlib
 
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from infodengue_pipeline.db.models import (
     AnalysisJobRow,
+    BulletinJobRow,
     OutboxEventRow,
     OutboxStatus,
     WorkflowInputRow,
@@ -20,6 +21,8 @@ from infodengue_pipeline.db.models import (
 from infodengue_pipeline.events import IngestionCompleted
 from infodengue_pipeline.models import (
     AnalysisJobStatus,
+    BulletinJobStatus,
+    BulletinKind,
     Coverage,
     Epiweek,
     IngestionInput,
@@ -34,6 +37,18 @@ class SqlWorkflowRepository:
 
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def get(
+        self, coverage: Coverage, epiweek: Epiweek
+    ) -> WorkflowSnapshot | None:
+        """Read one workflow without taking a writer lock."""
+        row = self._session.scalar(
+            select(WorkflowRow).where(
+                WorkflowRow.coverage == coverage,
+                WorkflowRow.epiweek == int(epiweek),
+            )
+        )
+        return self._snapshot(row, coverage, epiweek)
 
     def last_persisted_analysis_week(
         self, coverage: Coverage, initial_week: Epiweek
@@ -114,6 +129,13 @@ class SqlWorkflowRepository:
             )
             .with_for_update()
         )
+        return self._snapshot(row, coverage, epiweek)
+
+    @staticmethod
+    def _snapshot(
+        row: WorkflowRow | None, coverage: Coverage, epiweek: Epiweek
+    ) -> WorkflowSnapshot | None:
+        """Translate a loaded workflow to its domain snapshot."""
         if row is None:
             return None
         inputs = {
@@ -165,6 +187,94 @@ class SqlWorkflowRepository:
                 existing_item.completed_at = incoming.completed_at
         row.status = workflow.status
         row.queued_fingerprint = workflow.queued_fingerprint
+
+
+class SqlBulletinJobRepository:
+    """Persist one Recife bulletin row per scientific and renderer identity."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get(self, job_id: UUID) -> BulletinJobRow | None:
+        """Load one persisted bulletin job by its durable identifier."""
+        return self._session.get(BulletinJobRow, job_id)
+
+    def get_by_identity(
+        self,
+        *,
+        kind: BulletinKind,
+        municipality_geocode: int,
+        analysis_job_id: UUID,
+        renderer_revision: str,
+    ) -> BulletinJobRow | None:
+        """Load the one row for a complete bulletin identity."""
+        return self._session.scalar(
+            select(BulletinJobRow).where(
+                BulletinJobRow.kind == kind,
+                BulletinJobRow.municipality_geocode == municipality_geocode,
+                BulletinJobRow.analysis_job_id == analysis_job_id,
+                BulletinJobRow.renderer_revision == renderer_revision,
+            )
+        )
+
+    def get_or_create(
+        self,
+        *,
+        kind: BulletinKind,
+        municipality_geocode: int,
+        analysis_job_id: UUID,
+        renderer_revision: str,
+    ) -> BulletinJobRow:
+        """Insert once under the PostgreSQL identity constraint."""
+        if kind is not BulletinKind.RECIFE_INTRAMUNICIPAL:
+            raise ValueError('unsupported bulletin kind')
+        if municipality_geocode != 2611606:
+            raise ValueError('Recife municipality geocode is required')
+        if (
+            not renderer_revision
+            or renderer_revision.strip() != renderer_revision
+            or len(renderer_revision) > 128
+        ):
+            raise ValueError('renderer revision must be 1-128 nonblank chars')
+        analysis = self._session.get(AnalysisJobRow, analysis_job_id)
+        if analysis is None:
+            raise ValueError('analysis job does not exist')
+        workflow = self._session.get(WorkflowRow, analysis.workflow_id)
+        if workflow is None or workflow.coverage is not Coverage.PE:
+            raise ValueError('Recife bulletin requires PE analysis coverage')
+        if self._session.bind is None or (
+            self._session.bind.dialect.name != 'postgresql'
+        ):
+            raise RuntimeError('bulletin job persistence requires PostgreSQL')
+
+        new_id = uuid4()
+        statement = (
+            pg_insert(BulletinJobRow)
+            .values(
+                job_id=new_id,
+                kind=kind,
+                municipality_geocode=municipality_geocode,
+                analysis_job_id=analysis_job_id,
+                renderer_revision=renderer_revision,
+                status=BulletinJobStatus.QUEUED,
+                attempts=0,
+            )
+            .on_conflict_do_nothing(constraint='uq_bulletin_job_identity')
+            .returning(BulletinJobRow.job_id)
+        )
+        persisted_id = self._session.scalar(statement)
+        if persisted_id is not None:
+            row = self.get(persisted_id)
+        else:
+            row = self.get_by_identity(
+                kind=kind,
+                municipality_geocode=municipality_geocode,
+                analysis_job_id=analysis_job_id,
+                renderer_revision=renderer_revision,
+            )
+        if row is None:
+            raise RuntimeError('bulletin job insert did not persist a row')
+        return row
 
 
 class SqlOutboxRepository:

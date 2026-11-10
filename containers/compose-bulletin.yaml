@@ -1,0 +1,27 @@
+services:
+  bulletin-runner:
+    profiles: [bulletin]
+    image: infodengue-pipeline-bulletin:dev
+    build:
+      context: ..
+      dockerfile: containers/Dockerfile.bulletin
+    env_file: ${PIPELINE_BULLETIN_ENV_FILE:-../.envs/.env.bulletin.example}
+    networks:
+      - dev_integrations
+    volumes:
+      - ../.local/bulletins:/opt/alertadengueanalise/.local/bulletins
+      - ${RECIFE_REFERENCE_DIR:?set approved Recife neighborhood reference directory}:/reference:ro
+    command:
+      - python
+      - -m
+      - infodengue_pipeline.bulletin.runner
+      - --week
+      - ${BULLETIN_WEEK:?set reference week YYYYWW}
+      - --reference
+      - /reference/${RECIFE_REFERENCE_FILE:?set approved reference filename}
+    restart: "no"
+
+networks:
+  dev_integrations:
+    external: true
+    name: ${DEV_INTEGRATION_NETWORK:-infodengue-dev_infodengue}

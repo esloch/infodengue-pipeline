@@ -10,6 +10,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -31,6 +32,8 @@ from sqlalchemy.orm import (
 
 from infodengue_pipeline.models import (
     AnalysisJobStatus,
+    BulletinJobStatus,
+    BulletinKind,
     Coverage,
     Disease,
     WorkflowStatus,
@@ -279,5 +282,87 @@ class AnalysisJobRow(Base):
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(String(512))
+
+
+class BulletinJobRow(Base):
+    """One Recife bulletin attempt identity and its durable lifecycle."""
+
+    __tablename__ = 'bulletin_job'
+    __table_args__ = (
+        UniqueConstraint(
+            'kind',
+            'municipality_geocode',
+            'analysis_job_id',
+            'renderer_revision',
+            name='uq_bulletin_job_identity',
+        ),
+        CheckConstraint(
+            'municipality_geocode = 2611606',
+            name='ck_bulletin_job_recife_geocode',
+        ),
+        CheckConstraint(
+            "kind = 'recife_intramunicipal'",
+            name='ck_bulletin_job_kind',
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name='ck_bulletin_job_status',
+        ),
+        CheckConstraint('attempts >= 0', name='ck_bulletin_job_attempts'),
+        Index(
+            'ix_pipeline_bulletin_job_status_created', 'status', 'created_at'
+        ),
+        {'schema': 'pipeline'},
+    )
+
+    job_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    kind: Mapped[BulletinKind] = mapped_column(
+        Enum(
+            BulletinKind,
+            values_callable=enum_values,
+            native_enum=False,
+            length=32,
+        ),
+        nullable=False,
+    )
+    municipality_geocode: Mapped[int] = mapped_column(Integer, nullable=False)
+    analysis_job_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey('pipeline.analysis_job.job_id'),
+        nullable=False,
+    )
+    renderer_revision: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[BulletinJobStatus] = mapped_column(
+        Enum(
+            BulletinJobStatus,
+            values_callable=enum_values,
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=BulletinJobStatus.QUEUED,
+        server_default=BulletinJobStatus.QUEUED.value,
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default='0'
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    artifact_path: Mapped[str | None] = mapped_column(String(2048))
     exit_code: Mapped[int | None] = mapped_column(Integer)
     last_error: Mapped[str | None] = mapped_column(String(512))

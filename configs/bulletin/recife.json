@@ -1,0 +1,21 @@
+{
+  "municipio_geocodigo": 2611606,
+  "source": "boletins/Estaduais/dados/parameters.csv, Recife A90 row",
+  "thresholds": {
+    "preseason": 6.17929814643526,
+    "postseason": 8.149809490505399,
+    "epidemic": 26.9191565729611
+  },
+  "climate": {
+    "modelo": "Af",
+    "colunas": {"temp_min": "tempmin"},
+    "limiares": {"temp_min": 23}
+  },
+  "reference_columns": {
+    "neighborhood": "nm_bairro",
+    "id": "id_bairro",
+    "district": "distrito",
+    "population": "pop",
+    "geometry": "geometry"
+  }
+}

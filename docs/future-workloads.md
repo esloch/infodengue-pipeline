@@ -24,9 +24,15 @@ job; failed scientific jobs need explicit retry.
 with `psql -v ON_ERROR_STOP=1` when `load=true`, and maps after loading.
 Its Makim script uses `set -euo pipefail`, so subprocess failures propagate.
 At the default `load=false`, SQL is not applied and maps are skipped. The
-pipeline does not itself prove that `Municipio.Historico_alerta` and
-`Municipio.Historico_alerta_chik` contain the requested week. No bulletin
-dispatch, publication state, or downstream analysis event exists yet.
+read-only `CheckBulletinReadiness` service now requires a current successful PE
+workflow fingerprint and a matching succeeded `load=true` analysis job, checks
+that the job artifacts remain present, and reuses the bulletin runner's
+read-only database and reference validation. A separate bulletin job table
+now records one durable identity and lifecycle for the Recife renderer, but
+there is no bulletin claim, dispatch, or execution path. History rows do not
+carry the analysis input fingerprint, so current-week rows plus a successful
+load do not prove exact row-level provenance. No publication state or
+downstream analysis event exists yet.
 
 ## Verified bulletin boundary
 
@@ -78,11 +84,12 @@ entry points do not require interactive Google authentication.
 3. **Schedule bulletin rendering — `esloch/infodengue-pipeline`.** After 1–2,
    use the already persisted terminal analysis job and current workflow
    fingerprint as the readiness source; require the data-ready check before
-   dispatch. Add only the durable job state and routing that the concrete
-   renderer needs. Key idempotency by bulletin kind, coverage, week, input
-   fingerprint and renderer version; claim atomically and record artifact,
-   exit status, attempts and errors. Recover queued delivery after broker
-   failure, and require explicit retry after execution failure. **Accept:**
+   dispatch. The Recife job table and uniqueness constraint establish durable
+   identity; atomic claiming and routing remain. Key idempotency by bulletin
+   kind, coverage, week, input fingerprint and renderer version; claim
+   atomically and record artifact, exit status, attempts and errors. Recover
+   queued delivery after broker failure, and require explicit retry after
+   execution failure. **Accept:**
    duplicate delivery and Beat polls make one logical job, stale or failed
    analysis cannot render, `load=false` alone cannot render a DB-backed
    bulletin, and a later input fingerprint can produce a new job. Tests use
