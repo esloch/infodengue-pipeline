@@ -428,7 +428,7 @@ restore_port=55439
 )
 docker network create --internal "$restore_network"
 cleanup_restore() {
-  docker rm -f "$restore_container" >/dev/null 2>&1 || true
+  docker rm -fv "$restore_container" >/dev/null 2>&1 || true
   docker network rm "$restore_network" >/dev/null 2>&1 || true
 }
 trap cleanup_restore EXIT
