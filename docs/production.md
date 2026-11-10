@@ -331,6 +331,14 @@ boundary; database and Compose diagnostics are suppressed to avoid printing
 credentials. The check does not prove that the source or analysis role lacks
 write grants; provision and audit those roles separately.
 
+For a bounded view of persisted operational state, use
+[`prod.status`](operations.md#production-profile-status). It requires the
+existing `worker-events` container and reads only pipeline PostgreSQL. Backup,
+isolated restore, broker recovery, and retention procedures are documented in
+the [operations runbook](operations.md#postgresql-backup-and-isolated-restore).
+They have not been operationally rehearsed against deployment resources by
+this change; isolated restore acceptance remains a pending operator action.
+
 ## Read-only deployment validation
 
 On the staging host, point the private production-profile files at staging
@@ -407,8 +415,10 @@ RabbitMQ volumes hold persistent state.
 ## What is not validated yet
 
 The read-only validation does not prove watcher runtime supervision,
-`load=true`, scientific SQL application, map generation, production
-backup/restore, retention, shadow execution, or production cutover.
+`load=true`, scientific SQL application, map generation, backup/restore,
+retention execution, shadow execution, or production cutover. Issue #11 adds
+the status command and documents these procedures, but actual backup and
+isolated restore acceptance remain pending.
 The staging E2E result described in [operations](operations.md) has a different
 scope and used the staging profile.
 
@@ -418,5 +428,6 @@ Watcher supervision is defined in this production profile. The remaining
 production gates are:
 
 - #10: `load=true` staging validation.
-- #11: operations, backup/restore, and retention.
+- #11: operational status is implemented; backup/restore and retention
+  procedures are documented, with isolated restore acceptance pending.
 - #12: shadow validation and cutover.
