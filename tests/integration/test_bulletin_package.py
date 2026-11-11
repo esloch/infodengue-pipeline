@@ -227,18 +227,23 @@ ref <- sf::st_read(
 ref_path <- "/tmp/bulletin-artifacts/reference.rds"
 qmd <- "/tmp/bulletin-artifacts/test.qmd"
 saveRDS(ref, ref_path)
-infodengueintramunicipal::criar_qmd_boletim(
-  municipio_nome="Feira Livre", uf="XX", municipio_geocodigo=999999,
-  ano=2026, populacao=250000, output_qmd=qmd,
-  notificacoes_path=file.path(base, "notificacoes.csv"),
-  historico_alerta_path=file.path(base, "historico_alerta.csv"),
-  referencia_path=ref_path, col_bairro_ref="nm_bairro",
-  col_bairro_id_ref="id_bairro", col_distrito_ref="nm_distr",
-  col_pop_ref="pop", col_geometry_ref=attr(ref, "sf_column"),
-  limiar_preseason=5, limiar_epidemico=50, limiar_posseason=10,
-  config_climatica=list(modelo="Af", colunas=list(temp_min="tempmin"),
-                        limiares=list(temp_min=18)),
-  executar_nowcasting=FALSE, overwrite=FALSE, render=FALSE)
+config_path <- "/tmp/bulletin-artifacts/config.json"
+jsonlite::write_json(list(
+  geocode=999999,
+  reference_columns=list(neighborhood="nm_bairro", id="id_bairro",
+                         district="nm_distr", population="pop",
+                         geometry=attr(ref, "sf_column")),
+  thresholds=list(preseason=5, epidemic=50, postseason=10),
+  climate=list(modelo="Af", colunas=list(temp_min="tempmin"),
+               limiares=list(temp_min=18))
+), config_path, auto_unbox=TRUE)
+status <- system2("Rscript", c(
+  "/tmp/generate.R", config_path,
+  file.path(base, "notificacoes.csv"),
+  file.path(base, "historico_alerta.csv"), "''", ref_path, qmd,
+  "2026", "250000"
+))
+stopifnot(status == 0L)
 stopifnot(file.exists(qmd), file.info(qmd)$size > 0)
 qmd_text <- tolower(paste(readLines(qmd), collapse="\n"))
 stopifnot(grepl("executar_nowcasting: false", qmd_text, fixed=TRUE))
@@ -246,6 +251,10 @@ stopifnot(grepl("executar_nowcasting: false", qmd_text, fixed=TRUE))
         encoding='utf-8',
     )
 
+    adapter = (
+        Path(__file__).resolve().parents[2]
+        / 'src/infodengue_pipeline/bulletin/generate.R'
+    )
     container_output = subprocess.run(
         [
             docker,
@@ -253,6 +262,8 @@ stopifnot(grepl("executar_nowcasting: false", qmd_text, fixed=TRUE))
             '--rm',
             '--volume',
             f'{artifacts}:/tmp/bulletin-artifacts:rw',
+            '--volume',
+            f'{adapter}:/tmp/generate.R:ro',
             IMAGE,
             'bash',
             '-lc',

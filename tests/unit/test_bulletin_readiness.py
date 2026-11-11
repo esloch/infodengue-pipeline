@@ -164,7 +164,7 @@ def test_readiness_accepts_current_loaded_analysis_and_complete_inputs(
     reference = tmp_path / 'recife-neighborhoods.rds'
     reference.write_bytes(b'synthetic neighborhood reference')
     config = tmp_path / 'recife.json'
-    config.write_text(json.dumps({'municipio_geocodigo': 2611606}))
+    config.write_text(json.dumps({'geocode': 2611606}))
     set_valid_source_data(monkeypatch)
 
     result = CheckBulletinReadiness(
@@ -184,7 +184,7 @@ def test_readiness_rejects_missing_persisted_analysis_workflow(
     reference = tmp_path / 'reference.rds'
     reference.write_bytes(b'synthetic neighborhood reference')
     config = tmp_path / 'recife.json'
-    config.write_text(json.dumps({'municipio_geocodigo': 2611606}))
+    config.write_text(json.dumps({'geocode': 2611606}))
     set_valid_source_data(monkeypatch)
 
     result = CheckBulletinReadiness(
@@ -207,7 +207,7 @@ def test_readiness_rejects_missing_analysis_job_for_current_fingerprint(
     reference = tmp_path / 'reference.rds'
     reference.write_bytes(b'synthetic neighborhood reference')
     config = tmp_path / 'recife.json'
-    config.write_text(json.dumps({'municipio_geocodigo': 2611606}))
+    config.write_text(json.dumps({'geocode': 2611606}))
     set_valid_source_data(monkeypatch)
 
     result = CheckBulletinReadiness(
@@ -253,7 +253,7 @@ def test_readiness_rejects_noncurrent_or_unapplied_analysis(
     reference = tmp_path / 'reference.rds'
     reference.write_bytes(b'synthetic neighborhood reference')
     config = tmp_path / 'recife.json'
-    config.write_text(json.dumps({'municipio_geocodigo': 2611606}))
+    config.write_text(json.dumps({'geocode': 2611606}))
     set_valid_source_data(monkeypatch)
 
     result = CheckBulletinReadiness(
@@ -275,7 +275,7 @@ def test_readiness_rejects_missing_scientific_artifacts(
     reference = tmp_path / 'reference.rds'
     reference.write_bytes(b'synthetic neighborhood reference')
     config = tmp_path / 'recife.json'
-    config.write_text(json.dumps({'municipio_geocodigo': 2611606}))
+    config.write_text(json.dumps({'geocode': 2611606}))
     set_valid_source_data(monkeypatch)
 
     result = CheckBulletinReadiness(
@@ -294,7 +294,7 @@ def test_readiness_rejects_missing_reference_and_renderer_week(
     valid_outputs(output_dir)
     seed_current_job(sessions, output_dir)
     config = tmp_path / 'recife.json'
-    config.write_text(json.dumps({'municipio_geocodigo': 2611606}))
+    config.write_text(json.dumps({'geocode': 2611606}))
     monkeypatch.setattr(
         runner,
         'export_from_database',

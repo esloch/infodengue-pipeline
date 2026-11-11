@@ -1,5 +1,5 @@
 {
-  "municipio_geocodigo": 2611606,
+  "geocode": 2611606,
   "source": "boletins/Estaduais/dados/parameters.csv, Recife A90 row",
   "thresholds": {
     "preseason": 6.17929814643526,

@@ -104,13 +104,13 @@ def validate_notifications(rows: list[dict[str, Any]], last_week: int) -> None:
             )
         if int(row['municipio_geocodigo']) != GEOCODE:
             raise ValueError('notification outside Recife')
-        cid = str(row['cid10_codigo']).upper().replace('.', '')
-        if cid not in {'A90', 'A920'}:
+        disease_code = str(row['cid10_codigo']).upper().replace('.', '')
+        if disease_code not in {'A90', 'A920'}:
             raise ValueError('unsupported notification disease')
         identifier = str(row['nu_notific'] or '')
         if not identifier:
             raise ValueError('notification identifier missing')
-        key = cid, identifier
+        key = disease_code, identifier
         if key in seen:
             raise ValueError('duplicate notification identifier per disease')
         seen.add(key)
@@ -178,7 +178,7 @@ def validate_config(config: Path) -> dict[str, Any]:
     settings = json.loads(config.resolve().read_text(encoding='utf-8'))
     if not isinstance(settings, dict):
         raise ValueError('bulletin configuration must be a JSON object')
-    if settings.get('municipio_geocodigo') != GEOCODE:
+    if settings.get('geocode') != GEOCODE:
         raise ValueError('pilot config must select Recife')
     return settings
 
@@ -197,11 +197,11 @@ def load_validated_source_data(
     )
     validate_notifications(notifications, last_week)
     population = validate_history(history, last_week)
-    has_chik = any(
+    has_chikungunya = any(
         str(row['cid10_codigo']).upper().replace('.', '') == 'A920'
         for row in notifications
     )
-    if has_chik:
+    if has_chikungunya:
         validate_history(chik_history, last_week)
     return notifications, history, chik_history, population
 
@@ -297,17 +297,20 @@ def run(
             chik_history,
             population,
         ) = load_validated_source_data(database_url, week)
-        has_chik = any(
+        has_chikungunya = any(
             str(row['cid10_codigo']).upper().replace('.', '') == 'A920'
             for row in notifications
         )
         notification_path = directory / 'notifications.csv'
         history_path = directory / 'history_dengue.csv'
-        chik_path = directory / 'history_chikungunya.csv' if has_chik else None
+        chikungunya_path = (
+            directory / 'history_chikungunya.csv'
+            if has_chikungunya else None
+        )
         _csv(notification_path, notifications, NOTIFICATION_COLUMNS)
         _csv(history_path, history, HISTORY_COLUMNS)
-        if chik_path is not None:
-            _csv(chik_path, chik_history, HISTORY_COLUMNS)
+        if chikungunya_path is not None:
+            _csv(chikungunya_path, chik_history, HISTORY_COLUMNS)
         manifest['input_hashes'] = {
             'notifications': _hash(notification_path),
             'history_dengue': _hash(history_path),
@@ -322,10 +325,14 @@ def run(
             'notifications': str(notification_path),
             'history_dengue': str(history_path),
         }
-        if chik_path is not None:
-            manifest['input_hashes']['history_chikungunya'] = _hash(chik_path)
+        if chikungunya_path is not None:
+            manifest['input_hashes']['history_chikungunya'] = _hash(
+                chikungunya_path
+            )
             manifest['row_counts']['history_chikungunya'] = len(chik_history)
-            manifest['outputs']['history_chikungunya'] = str(chik_path)
+            manifest['outputs']['history_chikungunya'] = str(
+                chikungunya_path
+            )
         qmd = directory / 'bulletin.qmd'
         command = [
             rscript,
@@ -333,7 +340,7 @@ def run(
             str(config),
             str(notification_path),
             str(history_path),
-            str(chik_path) if chik_path else '',
+            str(chikungunya_path) if chikungunya_path else '',
             str(reference),
             str(qmd),
             str(week // 100),

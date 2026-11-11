@@ -97,7 +97,7 @@ def test_run_writes_isolated_manifest_and_omits_unobserved_chik(
 ) -> None:
     """Repeated attempts get separate outputs without fake chik history."""
     config = tmp_path / 'config.json'
-    config.write_text('{"municipio_geocodigo":2611606}')
+    config.write_text('{"geocode":2611606}')
     reference = tmp_path / 'reference.rds'
     reference.write_bytes(b'synthetic reference')
     monkeypatch.setattr(
@@ -142,7 +142,7 @@ def test_run_rejects_missing_chik_history_before_r(
 ) -> None:
     """Observed chik notifications require observed chik alert history."""
     config = tmp_path / 'config.json'
-    config.write_text('{"municipio_geocodigo":2611606}')
+    config.write_text('{"geocode":2611606}')
     reference = tmp_path / 'reference.rds'
     reference.write_bytes(b'synthetic reference')
     monkeypatch.setattr(
@@ -172,7 +172,7 @@ def test_run_exports_observed_chik_and_records_rendered_pdf(
 ) -> None:
     """A real chik source creates its own history and a PDF manifest entry."""
     config = tmp_path / 'config.json'
-    config.write_text('{"municipio_geocodigo":2611606}')
+    config.write_text('{"geocode":2611606}')
     reference = tmp_path / 'reference.rds'
     reference.write_bytes(b'synthetic reference')
     notifications = [
