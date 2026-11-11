@@ -364,5 +364,8 @@ class BulletinJobRow(Base):
         DateTime(timezone=True)
     )
     artifact_path: Mapped[str | None] = mapped_column(String(2048))
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     exit_code: Mapped[int | None] = mapped_column(Integer)
     last_error: Mapped[str | None] = mapped_column(String(512))

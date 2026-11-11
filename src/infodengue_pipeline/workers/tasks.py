@@ -5,6 +5,8 @@ from functools import lru_cache
 from uuid import UUID
 
 from infodengue_pipeline.analysis.runner import InContainerAnalysisRunner
+from infodengue_pipeline.bulletin.jobs import BulletinJobService
+from infodengue_pipeline.bulletin.readiness import CheckBulletinReadiness
 from infodengue_pipeline.config import Settings, get_settings
 from infodengue_pipeline.db.engine import session_factory, unit_of_work
 from infodengue_pipeline.db.jobs import AnalysisJobService
@@ -54,6 +56,25 @@ def _analysis_jobs(settings: Settings | None = None) -> AnalysisJobService:
             if config.analysis_initial_epiweek is not None
             else None
         ),
+    )
+
+
+def _bulletin_jobs(settings: Settings) -> BulletinJobService:
+    """Build the Recife service in its dedicated worker."""
+    source_url = (
+        settings.alerta_source_database_url.get_secret_value()
+        if settings.alerta_source_database_url is not None
+        else None
+    )
+    sessions = session_factory()
+    return BulletinJobService(
+        sessions,
+        CheckBulletinReadiness(sessions, source_url),
+        revision=settings.bulletin_renderer_revision,
+        reference=settings.bulletin_reference,
+        config=settings.bulletin_config,
+        output_root=settings.bulletin_output_root,
+        source_database_url=source_url,
     )
 
 
@@ -271,3 +292,52 @@ def retry_analysis(job_id: str) -> bool:
         retry=True,
     )
     return True
+
+
+@celery_app.task(name='pipeline.bulletin.dispatch_ready')  # type: ignore[untyped-decorator]
+def dispatch_bulletins(limit: int = 100) -> int:
+    """Publish ready Recife job IDs and recover expired broker leases."""
+    settings = get_settings()
+    if not settings.bulletin_enabled or settings.environment != 'dev':
+        return 0
+    configure_logging(settings.log_level)
+    jobs = _bulletin_jobs(settings)
+    jobs.fail_interrupted(settings.bulletin_execution_timeout_seconds)
+    created = jobs.dispatch_candidates(limit)
+    queued = jobs.queued_candidates(limit)
+    retry_before = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.bulletin_dispatch_retry_seconds
+    )
+    dispatched = 0
+    for job_id in set(created + queued):
+        if not jobs.claim_dispatch(job_id, retry_before):
+            continue
+        celery_app.send_task(
+            'pipeline.bulletin.run',
+            args=[str(job_id)],
+            queue='pipeline.bulletin',
+            routing_key='pipeline.bulletin',
+            retry=True,
+        )
+        dispatched += 1
+    return dispatched
+
+
+@celery_app.task(name='pipeline.bulletin.run')  # type: ignore[untyped-decorator]
+def run_bulletin(job_id: str) -> bool:
+    """Run a queued bulletin once in the dedicated R/Quarto worker."""
+    settings = get_settings()
+    if not settings.bulletin_enabled or settings.environment != 'dev':
+        return False
+    configure_logging(settings.log_level)
+    return _bulletin_jobs(settings).execute(UUID(job_id))
+
+
+@celery_app.task(name='pipeline.bulletin.retry')  # type: ignore[untyped-decorator]
+def retry_bulletin(job_id: str) -> bool:
+    """Explicitly requeue a failed bulletin for the next Beat poll."""
+    settings = get_settings()
+    if not settings.bulletin_enabled or settings.environment != 'dev':
+        return False
+    configure_logging(settings.log_level)
+    return _bulletin_jobs(settings).retry(UUID(job_id))

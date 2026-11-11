@@ -1,15 +1,20 @@
 """PostgreSQL guarantees for durable Recife bulletin job identity."""
 
+import json
 import os
+import threading
 
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
 
+from infodengue_pipeline.bulletin.jobs import BulletinJobService
+from infodengue_pipeline.bulletin.readiness import BulletinReadinessResult
 from infodengue_pipeline.db.engine import SqlUnitOfWork
 from infodengue_pipeline.db.models import (
     AnalysisJobRow,
@@ -51,10 +56,10 @@ def postgres_sessions() -> Iterator[sessionmaker[Session]]:
             current = connection.scalar(
                 text('SELECT version_num FROM alembic_version')
             )
-            if current != '0003_bulletin_jobs':
+            if current != '0004_bulletin_dispatch':
                 pytest.fail(
                     'disposable PostgreSQL database must be migrated to '
-                    '0003_bulletin_jobs'
+                    '0004_bulletin_dispatch'
                 )
         yield sessionmaker(engine, expire_on_commit=False)
     finally:
@@ -113,6 +118,135 @@ def create(
         analysis_job_id=analysis_job_id,
         renderer_revision=revision,
     )
+
+
+class Ready:
+    """Controllable scientific prerequisite for job lifecycle tests."""
+
+    def __init__(self, analysis_id: UUID) -> None:
+        self.analysis_id = analysis_id
+        self.eligible = True
+
+    def check(
+        self, _week: object, _reference: Path, _config: Path
+    ) -> BulletinReadinessResult:
+        """Return the chosen analysis identity without external data access."""
+        return BulletinReadinessResult(
+            self.eligible, analysis_job_id=self.analysis_id
+        )
+
+
+def _service(
+    sessions: sessionmaker[Session],
+    analysis_id: UUID,
+    tmp_path: Path,
+    render: object,
+) -> tuple[BulletinJobService, Ready]:
+    readiness = Ready(analysis_id)
+    service = BulletinJobService(
+        sessions,
+        readiness,
+        revision=REVISION,
+        reference=tmp_path / 'reference.rds',
+        config=tmp_path / 'recife.json',
+        output_root=tmp_path,
+        source_database_url='postgresql://readonly.test/source',
+        render=render,
+    )
+    return service, readiness
+
+
+def test_bulletin_lifecycle_duplicate_delivery_and_retry(
+    postgres_sessions: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    """One claimant runs; failure requires an explicit retry."""
+    analysis_id, _ = seed_analysis(
+        postgres_sessions, week=209920, fingerprint=uuid4().hex
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    fail = True
+
+    def render(**_kwargs: object) -> Path:
+        nonlocal fail
+        entered.set()
+        release.wait(timeout=10)
+        if fail:
+            raise RuntimeError('secret source URL must not persist')
+        pdf = tmp_path / 'bulletin.pdf'
+        pdf.write_bytes(b'%PDF-test')
+        manifest = tmp_path / 'manifest.json'
+        manifest.write_text(
+            json.dumps({'status': 'succeeded', 'outputs': {'pdf': str(pdf)}})
+        )
+        return manifest
+
+    service, readiness = _service(
+        postgres_sessions, analysis_id, tmp_path, render
+    )
+    ids = service.dispatch_candidates(100)
+    assert len(ids) == 1
+    assert service.dispatch_candidates(100) == ids
+    job_id = ids[0]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(service.execute, job_id)
+        assert entered.wait(timeout=10)
+        assert service.fail_interrupted(0) == 0
+        second = executor.submit(service.execute, job_id)
+        release.set()
+        assert first.result(timeout=10) is False
+        assert second.result(timeout=10) is False
+    with postgres_sessions() as session:
+        row = session.get(BulletinJobRow, job_id)
+        assert row.status is BulletinJobStatus.FAILED
+        assert row.attempts == 1
+        assert 'secret' not in row.last_error
+    assert service.execute(job_id) is False
+    assert service.retry(job_id)
+    fail = False
+    assert service.execute(job_id)
+    assert service.execute(job_id) is False
+    with postgres_sessions() as session:
+        row = session.get(BulletinJobRow, job_id)
+        assert row.status is BulletinJobStatus.SUCCEEDED
+        assert row.attempts == 2
+        assert row.artifact_path == str(tmp_path / 'bulletin.pdf')
+        assert row.exit_code == 0
+        assert row.finished_at is not None
+    readiness.eligible = False
+    assert service.dispatch_candidates(100) == []
+
+
+def test_bulletin_dispatch_recovery_and_interrupted_execution(
+    postgres_sessions: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    """Expired publication leases recover; stale running jobs fail once."""
+    analysis_id, _ = seed_analysis(
+        postgres_sessions, week=209921, fingerprint=uuid4().hex
+    )
+    service, readiness = _service(
+        postgres_sessions, analysis_id, tmp_path, lambda **_kwargs: tmp_path
+    )
+    job_id = service.dispatch_candidates(100)[0]
+    now = datetime.now(timezone.utc)
+    assert service.claim_dispatch(job_id, now)
+    assert not service.claim_dispatch(job_id, now)
+    assert service.claim_dispatch(job_id, now + timedelta(seconds=1))
+    readiness.eligible = False
+    assert not service.claim_dispatch(job_id, now + timedelta(seconds=2))
+    with postgres_sessions.begin() as session:
+        row = session.get(BulletinJobRow, job_id)
+        row.status = BulletinJobStatus.RUNNING
+        row.attempts = 1
+        row.started_at = now - timedelta(hours=3)
+    assert service.fail_interrupted(7200) == 1
+    assert service.fail_interrupted(7200) == 0
+    with postgres_sessions() as session:
+        row = session.get(BulletinJobRow, job_id)
+        assert row.status is BulletinJobStatus.FAILED
+        assert row.attempts == 1
 
 
 def test_creation_defaults_retrieval_and_duplicate_reuse(

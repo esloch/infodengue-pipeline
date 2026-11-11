@@ -1,10 +1,10 @@
 # Recife intramunicipal bulletin pilot
 
-This is a manual development-only workflow. It reads the existing `Municipio`
+This development-only workflow reads the existing `Municipio`
 notification and alert-history tables in one read-only transaction. It writes
 CSVs, a QMD, logs, a PDF when rendering succeeds, and `manifest.json` in a new
 UUID-named directory under `.local/bulletins`. It never writes to the source DB,
-publishes the PDF, or schedules a Celery task.
+publishes the PDF. Celery scheduling is disabled by default.
 
 ## Prerequisites
 
@@ -86,12 +86,23 @@ The unique constraint on kind, municipality geocode, analysis job ID, and
 renderer revision prevents duplicate logical jobs. A new scientific
 fingerprint or renderer revision permits a new row.
 
-New rows start `queued` with zero attempts and no result. A future executor
-may transition `queued → running → succeeded/failed`; a failed job requires
-an explicit retry back to `queued`. That transition and the attempt increment
-must be atomic when execution is implemented. Creation and retrieval are
-available through `SqlBulletinJobRepository` within the existing Unit of Work.
-There is currently no automatic claim, dispatch, or rendering from this table.
+New rows start `queued` with zero attempts and no result. The dedicated
+`pipeline.bulletin` worker rechecks readiness, claims a job atomically, then
+renders outside a PostgreSQL transaction. It records the PDF path or a safe
+failure label. Duplicate delivery does not start another render. Failed jobs
+require an explicit `pipeline.bulletin.retry` task; interrupted jobs become
+failed after the configured timeout. Expired dispatch leases allow queued
+messages to be republished after a broker failure.
+
+To enable the development schedule, export
+`INFODENGUE_PIPELINE_BULLETIN_ENABLED=true` for Compose and start the `bulletin`
+profile of `containers/compose.yaml`. This sets the same opt-in for Beat and the
+bulletin worker. Supply the approved
+reference directory as `RECIFE_REFERENCE_DIR`, with
+`recife_bairros.rds` inside it, and set the read-only source URL in the bulletin
+worker env file. The worker mounts analysis artifacts read-only and persists
+PDFs in `pipeline_bulletin_output`. Keep the flag false until the source data,
+reference, and image are verified. No PDF publication task is provided.
 
 ## Synthetic container integration test
 
