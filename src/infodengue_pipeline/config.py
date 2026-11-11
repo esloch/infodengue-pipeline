@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     analysis_poll_seconds: int = Field(default=10, ge=1)
     analysis_dispatch_retry_seconds: int = Field(default=60, ge=1)
     bulletin_enabled: bool = False
+    bulletin_authorization_file: Path | None = None
+    bulletin_analysis_database_identity: str | None = None
     bulletin_renderer_revision: str = (
         'fe82d1d5f6caf0a91aca585f0385cf1abea2e953+quarto-1.11.9'
     )

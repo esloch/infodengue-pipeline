@@ -185,6 +185,79 @@ def test_database_probe_issues_only_selects(
     }
 
 
+def test_rehearsal_probes_actual_identity_and_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rehearsal reads server-reported identity and effective grants."""
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.execute.return_value.one.return_value = (
+        'dengue', '10.0.0.8', 5432, 'stage_reader', 'off', False
+    )
+    connection.scalar.side_effect = [
+        privilege == 'SELECT'
+        for _table in range(3)
+        for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+    ]
+    monkeypatch.setattr(probes, 'create_engine', lambda *_a, **_k: engine)
+    result = probes.inspect_rehearsal_database(
+        'rehearsal-source', settings(tmp_path)
+    )
+    assert result == {
+        'database': 'dengue',
+        'server_address': '10.0.0.8',
+        'server_port': 5432,
+        'current_user': 'stage_reader',
+        'role': 'rehearsal-source',
+    }
+    assert 'current_database()' in str(connection.execute.call_args.args[0])
+    assert connection.scalar.call_count == 12
+    engine.dispose.assert_called_once_with()
+
+
+def test_rehearsal_rejects_unexpected_grants_and_readonly_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source writer or read-only analysis target blocks rehearsal."""
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.execute.return_value.one.return_value = (
+        'dengue', '10.0.0.8', 5432, 'stage_user', 'off', False
+    )
+    connection.scalar.side_effect = [True, True]
+    monkeypatch.setattr(probes, 'create_engine', lambda *_a, **_k: engine)
+    with pytest.raises(RuntimeError, match='grants invalid'):
+        probes.inspect_rehearsal_database(
+            'rehearsal-source', settings(tmp_path)
+        )
+    connection.execute.return_value.one.return_value = (
+        'dengue', '10.0.0.8', 5432, 'stage_user', 'on', False
+    )
+    with pytest.raises(RuntimeError, match='grants invalid'):
+        probes.inspect_rehearsal_database(
+            'rehearsal-analysis', settings(tmp_path)
+        )
+
+
+def test_rehearsal_analysis_requires_history_write_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The actual analysis role must be able to apply both histories."""
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.execute.return_value.one.return_value = (
+        'dengue', '10.0.0.8', 5432, 'stage_writer', 'off', False
+    )
+    connection.scalar.side_effect = [True] * 6
+    monkeypatch.setattr(probes, 'create_engine', lambda *_a, **_k: engine)
+    result = probes.inspect_rehearsal_database(
+        'rehearsal-analysis', settings(tmp_path)
+    )
+    assert result['current_user'] == 'stage_writer'
+    assert connection.scalar.call_count == 6
+    engine.dispose.assert_called_once_with()
+
+
 def test_database_revision_failure_disposes_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

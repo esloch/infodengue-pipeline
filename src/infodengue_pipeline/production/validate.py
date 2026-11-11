@@ -1,6 +1,7 @@
 """Probe production-profile dependencies from their respective workers."""
 
 import argparse
+import json
 import os
 import re
 
@@ -59,6 +60,88 @@ def check_database(url: str, *, migration: bool = False) -> None:
                 connection.execute(
                     text('SELECT 1 FROM pipeline.analysis_job LIMIT 1')
                 )
+    finally:
+        engine.dispose()
+
+
+def inspect_rehearsal_database(
+    role: str, settings: Settings
+) -> dict[str, object]:
+    """Read the reached PostgreSQL identity and required table grants."""
+    if role not in {'rehearsal-source', 'rehearsal-analysis'}:
+        raise ValueError('unknown rehearsal database role')
+    if settings.environment != 'prod':
+        raise ValueError('environment must be prod')
+    url = (
+        settings.alerta_source_database_url
+        if role == 'rehearsal-source'
+        else settings.analysis_database_url
+    )
+    if url is None:
+        raise ValueError(f'{role}: database URL is not configured')
+    try:
+        engine = create_engine(
+            url.get_secret_value(),
+            connect_args={
+                'connect_timeout': _PROBE_TIMEOUT_SECONDS,
+                'options': (
+                    f'-c statement_timeout={_PROBE_TIMEOUT_SECONDS * 1000}'
+                ),
+            },
+        )
+    except Exception as exc:
+        raise RuntimeError(f'{role}: database unavailable') from exc
+    try:
+        with engine.connect() as connection:
+            database, address, port, user, readonly, recovery = (
+                connection.execute(
+                    text(
+                        'SELECT current_database(), inet_server_addr()::text, '
+                        'inet_server_port(), current_user, '
+                        "current_setting('transaction_read_only'), "
+                        'pg_is_in_recovery()'
+                    )
+                ).one()
+            )
+            if not address or not port or recovery:
+                raise ValueError('database server identity is unavailable')
+            if role == 'rehearsal-analysis' and readonly != 'off':
+                raise ValueError('analysis database is read-only')
+            tables = ['Historico_alerta', 'Historico_alerta_chik']
+            if role == 'rehearsal-source':
+                tables.append('Notificacao')
+            required = (
+                {'SELECT', 'INSERT', 'UPDATE'}
+                if role == 'rehearsal-analysis'
+                else {'SELECT'}
+            )
+            for table in tables:
+                relation = f'"Municipio"."{table}"'
+                for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
+                    if role == 'rehearsal-analysis' and privilege == 'DELETE':
+                        continue
+                    granted = connection.scalar(
+                        text(
+                            'SELECT has_table_privilege('
+                            'current_user, :relation, :privilege)'
+                        ),
+                        {'relation': relation, 'privilege': privilege},
+                    )
+                    if bool(granted) != (privilege in required):
+                        raise ValueError(
+                            f'{role}: unexpected {privilege} grant on {table}'
+                        )
+            return {
+                'database': str(database),
+                'server_address': str(address),
+                'server_port': int(port),
+                'current_user': str(user),
+                'role': role,
+            }
+    except Exception as exc:
+        raise RuntimeError(
+            f'{role}: database identity or grants invalid'
+        ) from exc
     finally:
         engine.dispose()
 
@@ -155,9 +238,18 @@ def validate(role: str, settings: Settings) -> list[str]:
 def main() -> None:
     """Run worker probes without printing exception details or secrets."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('role', choices=('ingestion', 'analysis'))
+    parser.add_argument(
+        'role',
+        choices=(
+            'ingestion', 'analysis',
+            'rehearsal-source', 'rehearsal-analysis',
+        ),
+    )
     role = parser.parse_args().role
     try:
+        if role.startswith('rehearsal-'):
+            print(json.dumps(inspect_rehearsal_database(role, get_settings())))
+            return
         for result in validate(role, get_settings()):
             print(result, flush=True)
     except (ValueError, RuntimeError) as exc:

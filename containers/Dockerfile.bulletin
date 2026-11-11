@@ -24,5 +24,6 @@ COPY src /tmp/bulletin-src/src
 RUN python -m pip install --no-cache-dir --no-deps /tmp/bulletin-src \
     && rm -rf /tmp/bulletin-src
 COPY configs /opt/alertadengueanalise/configs
+COPY scripts/run_prod_bulletin_acceptance.py /opt/alertadengueanalise/scripts/run_prod_bulletin_acceptance.py
 WORKDIR /opt/alertadengueanalise
 ENV PROJ_DATA=/opt/conda/envs/alertadengueanalise/share/proj

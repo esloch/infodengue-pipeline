@@ -5,6 +5,7 @@ from functools import lru_cache
 from uuid import UUID
 
 from infodengue_pipeline.analysis.runner import InContainerAnalysisRunner
+from infodengue_pipeline.bulletin.authorization import bulletin_authorized
 from infodengue_pipeline.bulletin.jobs import BulletinJobService
 from infodengue_pipeline.bulletin.readiness import CheckBulletinReadiness
 from infodengue_pipeline.config import Settings, get_settings
@@ -298,7 +299,7 @@ def retry_analysis(job_id: str) -> bool:
 def dispatch_bulletins(limit: int = 100) -> int:
     """Publish ready Recife job IDs and recover expired broker leases."""
     settings = get_settings()
-    if not settings.bulletin_enabled or settings.environment != 'dev':
+    if not bulletin_authorized(settings):
         return 0
     configure_logging(settings.log_level)
     jobs = _bulletin_jobs(settings)
@@ -327,7 +328,7 @@ def dispatch_bulletins(limit: int = 100) -> int:
 def run_bulletin(job_id: str) -> bool:
     """Run a queued bulletin once in the dedicated R/Quarto worker."""
     settings = get_settings()
-    if not settings.bulletin_enabled or settings.environment != 'dev':
+    if not bulletin_authorized(settings):
         return False
     configure_logging(settings.log_level)
     return _bulletin_jobs(settings).execute(UUID(job_id))
@@ -337,7 +338,7 @@ def run_bulletin(job_id: str) -> bool:
 def retry_bulletin(job_id: str) -> bool:
     """Explicitly requeue a failed bulletin for the next Beat poll."""
     settings = get_settings()
-    if not settings.bulletin_enabled or settings.environment != 'dev':
+    if not bulletin_authorized(settings):
         return False
     configure_logging(settings.log_level)
     return _bulletin_jobs(settings).retry(UUID(job_id))

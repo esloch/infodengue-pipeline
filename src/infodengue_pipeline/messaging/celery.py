@@ -3,6 +3,7 @@
 from celery import Celery
 from kombu import Exchange, Queue
 
+from infodengue_pipeline.bulletin.authorization import bulletin_authorized
 from infodengue_pipeline.config import get_settings
 
 
@@ -101,7 +102,7 @@ def create_celery_app() -> Celery:
                         'schedule': settings.bulletin_poll_seconds,
                     }
                 }
-                if settings.bulletin_enabled and settings.environment == 'dev'
+                if bulletin_authorized(settings)
                 else {}
             ),
         },

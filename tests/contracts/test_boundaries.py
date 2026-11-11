@@ -73,6 +73,7 @@ def test_celery_routing_and_broker_configuration() -> None:
         'pipeline.events',
         'pipeline.orchestration',
         'pipeline.analysis',
+        'pipeline.bulletin',
     }
     assert (
         celery_app.conf.task_routes['pipeline.events.ingestion_completed'][

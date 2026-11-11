@@ -194,6 +194,9 @@ services:
     env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}
     environment:
       INFODENGUE_PIPELINE_ENVIRONMENT: prod
+      INFODENGUE_PIPELINE_BULLETIN_AUTHORIZATION_FILE: /run/bulletin-authorization.json
+    volumes:
+      - ${BULLETIN_AUTH_HOST_PATH:-/dev/null}:/run/bulletin-authorization.json:ro
     command:
       - celery
       - -A
@@ -213,6 +216,49 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+
+  worker-bulletin:
+    profiles: [bulletin]
+    image: ${PIPELINE_BULLETIN_IMAGE:-bulletin-image-unconfigured}
+    env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}
+    environment:
+      INFODENGUE_PIPELINE_ENVIRONMENT: prod
+      INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
+      INFODENGUE_PIPELINE_BULLETIN_AUTHORIZATION_FILE: /run/bulletin-authorization.json
+      INFODENGUE_PIPELINE_BULLETIN_REFERENCE: /reference/${RECIFE_REFERENCE_FILE:-unconfigured}
+      INFODENGUE_PIPELINE_BULLETIN_OUTPUT_ROOT: /var/lib/pipeline/bulletins
+    command:
+      - celery
+      - -A
+      - infodengue_pipeline.messaging.celery:celery_app
+      - worker
+      - --loglevel=INFO
+      - --queues=pipeline.bulletin
+      - --concurrency=1
+      - --hostname=worker-bulletin@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+      - prod_integrations
+    volumes:
+      - ${PROD_ANALYSIS_OUTPUT_HOST_PATH:?set analysis output directory}:/var/lib/pipeline/analysis-output:ro
+      - ${RECIFE_REFERENCE_DIR:-/dev/null}:/reference:ro
+      - ${PROD_BULLETIN_OUTPUT_HOST_PATH:-/dev/null}:/var/lib/pipeline/bulletins
+      - ${BULLETIN_AUTH_HOST_PATH:-/dev/null}:/run/bulletin-authorization.json:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery -A infodengue_pipeline.messaging.celery:celery_app inspect ping --timeout=5 --destination=worker-bulletin@$$(hostname) | grep -q pong
+      interval: 15s
+      timeout: 8s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
   pipeline_prod_pgdata:
