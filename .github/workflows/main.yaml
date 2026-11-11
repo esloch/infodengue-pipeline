@@ -9,6 +9,20 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pipeline_test
+          POSTGRES_PASSWORD: pipeline_test
+          POSTGRES_DB: pipeline_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pipeline_test -d pipeline_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -18,7 +32,13 @@ jobs:
         run: uv run pre-commit run --all-files
       - name: Quality
         run: uv run makim quality.all
+      - name: Migrate disposable test database
+        env:
+          INFODENGUE_PIPELINE_DATABASE_URL: postgresql+psycopg://pipeline_test:pipeline_test@localhost:5432/pipeline_test
+        run: uv run alembic upgrade head
       - name: Tests and coverage
+        env:
+          INFODENGUE_PIPELINE_TEST_POSTGRES_URL: postgresql+psycopg://pipeline_test:pipeline_test@localhost:5432/pipeline_test
         run: uv run makim tests.all
       - name: Package build
         run: uv build

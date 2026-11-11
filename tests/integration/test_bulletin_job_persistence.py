@@ -29,7 +29,7 @@ from infodengue_pipeline.models import (
     Coverage,
     WorkflowStatus,
 )
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, delete, func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -49,6 +49,7 @@ def postgres_sessions() -> Iterator[sessionmaker[Session]]:
     if not database or 'test' not in database:
         pytest.fail('bulletin persistence tests require a disposable test DB')
     engine = create_engine(url, pool_pre_ping=True)
+    existing_workflows: set[UUID] | None = None
     try:
         if engine.dialect.name != 'postgresql':
             pytest.fail('bulletin persistence tests require PostgreSQL')
@@ -61,8 +62,40 @@ def postgres_sessions() -> Iterator[sessionmaker[Session]]:
                     'disposable PostgreSQL database must be migrated to '
                     '0004_bulletin_dispatch'
                 )
+        with Session(engine) as session:
+            existing_workflows = set(
+                session.scalars(select(WorkflowRow.workflow_id))
+            )
         yield sessionmaker(engine, expire_on_commit=False)
     finally:
+        if existing_workflows is not None:
+            with Session(engine) as session:
+                new_workflows = (
+                    set(session.scalars(select(WorkflowRow.workflow_id)))
+                    - existing_workflows
+                )
+                if new_workflows:
+                    analysis_ids = session.scalars(
+                        select(AnalysisJobRow.job_id).where(
+                            AnalysisJobRow.workflow_id.in_(new_workflows)
+                        )
+                    ).all()
+                    session.execute(
+                        delete(BulletinJobRow).where(
+                            BulletinJobRow.analysis_job_id.in_(analysis_ids)
+                        )
+                    )
+                    session.execute(
+                        delete(AnalysisJobRow).where(
+                            AnalysisJobRow.workflow_id.in_(new_workflows)
+                        )
+                    )
+                    session.execute(
+                        delete(WorkflowRow).where(
+                            WorkflowRow.workflow_id.in_(new_workflows)
+                        )
+                    )
+                    session.commit()
         engine.dispose()
 
 
@@ -141,6 +174,7 @@ def _service(
     analysis_id: UUID,
     tmp_path: Path,
     render: object,
+    source_database_url: str | None = 'postgresql://readonly.test/source',
 ) -> tuple[BulletinJobService, Ready]:
     readiness = Ready(analysis_id)
     service = BulletinJobService(
@@ -150,7 +184,7 @@ def _service(
         reference=tmp_path / 'reference.rds',
         config=tmp_path / 'recife.json',
         output_root=tmp_path,
-        source_database_url='postgresql://readonly.test/source',
+        source_database_url=source_database_url,
         render=render,
     )
     return service, readiness
@@ -247,6 +281,59 @@ def test_bulletin_dispatch_recovery_and_interrupted_execution(
         row = session.get(BulletinJobRow, job_id)
         assert row.status is BulletinJobStatus.FAILED
         assert row.attempts == 1
+
+
+def test_missing_jobs_and_invalid_artifacts_fail_safely(
+    postgres_sessions: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    """Missing identities and invalid render output never mark success."""
+    analysis_id, _ = seed_analysis(
+        postgres_sessions, week=209922, fingerprint=uuid4().hex
+    )
+    manifest = tmp_path / 'manifest.json'
+    manifest.write_text(
+        json.dumps(
+            {
+                'status': 'succeeded',
+                'outputs': {'pdf': str(tmp_path / 'missing.pdf')},
+            }
+        )
+    )
+    service, readiness = _service(
+        postgres_sessions, analysis_id, tmp_path, lambda **_kwargs: manifest
+    )
+    missing_id = uuid4()
+    assert not service.claim_dispatch(missing_id, datetime.now(timezone.utc))
+    assert not service.execute(missing_id)
+    assert not service.retry(missing_id)
+
+    job_id = service.dispatch_candidates(100)[0]
+    assert job_id in service.queued_candidates(100)
+    readiness.eligible = False
+    assert not service.execute(job_id)
+    readiness.eligible = True
+    assert not service.execute(job_id)
+    with postgres_sessions() as session:
+        row = session.get(BulletinJobRow, job_id)
+        assert row.status is BulletinJobStatus.FAILED
+        assert row.artifact_path is None
+        assert row.exit_code == 1
+        assert row.last_error == 'ValueError during bulletin execution'
+    assert service.retry(job_id)
+    without_source, _ = _service(
+        postgres_sessions,
+        analysis_id,
+        tmp_path,
+        lambda **_kwargs: pytest.fail('renderer must not run'),
+        source_database_url=None,
+    )
+    assert not without_source.execute(job_id)
+    with postgres_sessions() as session:
+        row = session.get(BulletinJobRow, job_id)
+        assert row.status is BulletinJobStatus.FAILED
+        assert row.attempts == 2
+        assert row.last_error == 'ValueError during bulletin execution'
 
 
 def test_creation_defaults_retrieval_and_duplicate_reuse(
