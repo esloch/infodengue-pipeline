@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     incoming_root: Path = Path('.local/incoming')
     alerta_source_database_url: SecretStr | None = None
     analysis_database_url: SecretStr | None = None
+    bulletin_history_database_url: SecretStr | None = None
     analysis_image: str | None = None  # Executing worker image provenance.
     analysis_output_root: Path = Path('.local/analysis-output')
     analysis_cores: int = Field(default=1, ge=1, le=64)
@@ -55,7 +56,6 @@ class Settings(BaseSettings):
     analysis_dispatch_retry_seconds: int = Field(default=60, ge=1)
     bulletin_enabled: bool = False
     bulletin_authorization_file: Path | None = None
-    bulletin_analysis_database_identity: str | None = None
     bulletin_renderer_revision: str = (
         'fe82d1d5f6caf0a91aca585f0385cf1abea2e953+quarto-1.11.9'
     )

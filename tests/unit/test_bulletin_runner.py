@@ -6,10 +6,46 @@ import subprocess
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from infodengue_pipeline.bulletin import runner
+
+
+def test_separate_source_and_history_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Notifications stay on source; both histories use the loaded target."""
+    source_engine = MagicMock()
+    history_engine = MagicMock()
+    source = source_engine.connect.return_value.__enter__.return_value
+    target = history_engine.connect.return_value
+    source.execute.return_value.mappings.return_value = [notification()]
+    target.execute.side_effect = [
+        MagicMock(mappings=lambda: [history()]),
+        MagicMock(mappings=lambda: []),
+    ]
+    monkeypatch.setattr(
+        runner,
+        'create_engine',
+        lambda url, **_kwargs: (
+            source_engine if url == 'source' else history_engine
+        ),
+    )
+    runner.load_validated_source_data('source', 202630, 'target')
+    assert source.execute.call_args.args[0] is runner.NOTIFICATION_SQL
+    assert [call.args[0] for call in target.execute.call_args_list] == [
+        runner.HISTORY_SQL,
+        runner.CHIK_HISTORY_SQL,
+    ]
+
+
+def test_notification_sql_accepts_integer_week_columns() -> None:
+    """Regex checks cast integer-backed staging columns to text."""
+    sql = str(runner.NOTIFICATION_SQL)
+    assert "ano_notif::text ~ '^[0-9]{4}$'" in sql
+    assert "se_notif::text ~ '^[0-9]{1,2}$'" in sql
 
 
 def notification(**changes: object) -> dict[str, object]:

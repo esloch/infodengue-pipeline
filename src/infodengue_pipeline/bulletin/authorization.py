@@ -26,11 +26,12 @@ def bulletin_authorized(settings: Settings) -> bool:
         return False
     try:
         source = settings.alerta_source_database_url
-        target_id = settings.bulletin_analysis_database_identity
-        if source is None or not target_id:
+        history = settings.bulletin_history_database_url
+        if source is None or history is None:
             return False
         source_id = _database_identity(source.get_secret_value())
-        if source_id != target_id:
+        target_id = _database_identity(history.get_secret_value())
+        if source_id == target_id:
             return False
         expected = {
             'profile': 'isolated-staging-rehearsal',
@@ -54,6 +55,7 @@ def bulletin_authorized(settings: Settings) -> bool:
             and not settings.minio_prefix.startswith('/')
             and '..' not in settings.minio_prefix.split('/')
             and source_id != expected['pipeline_database']
+            and target_id != expected['pipeline_database']
         )
     except (OSError, ValueError, TypeError, KeyError):
         return False

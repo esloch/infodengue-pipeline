@@ -67,15 +67,21 @@ def _bulletin_jobs(settings: Settings) -> BulletinJobService:
         if settings.alerta_source_database_url is not None
         else None
     )
+    history_url = (
+        settings.bulletin_history_database_url.get_secret_value()
+        if settings.bulletin_history_database_url is not None
+        else None
+    )
     sessions = session_factory()
     return BulletinJobService(
         sessions,
-        CheckBulletinReadiness(sessions, source_url),
+        CheckBulletinReadiness(sessions, source_url, history_url),
         revision=settings.bulletin_renderer_revision,
         reference=settings.bulletin_reference,
         config=settings.bulletin_config,
         output_root=settings.bulletin_output_root,
         source_database_url=source_url,
+        history_database_url=history_url,
     )
 
 

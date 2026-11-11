@@ -20,7 +20,9 @@ def _settings(path: Path, **changes: object) -> Settings:
         'bulletin_authorization_file': path,
         'database_url': 'postgresql+psycopg://user:secret@pipeline-postgres/pipeline_prod',
         'alerta_source_database_url': 'postgresql://reader:secret@staging-db/dengue',
-        'bulletin_analysis_database_identity': 'staging-db:5432/dengue',
+        'bulletin_history_database_url': (
+            'postgresql://history:secret@staging-analysis/dengue'
+        ),
         'minio_endpoint': 'staging-minio:9000',
         'minio_bucket': 'staging-sinan',
         'minio_prefix': 'recife-rehearsal/',
@@ -34,7 +36,7 @@ def _manifest(settings: Settings) -> dict[str, str]:
         'profile': 'isolated-staging-rehearsal',
         'pipeline_database': 'pipeline-postgres:5432/pipeline_prod',
         'source_database': 'staging-db:5432/dengue',
-        'analysis_database': 'staging-db:5432/dengue',
+        'analysis_database': 'staging-analysis:5432/dengue',
         'minio_endpoint': settings.minio_endpoint,
         'minio_bucket': settings.minio_bucket,
         'minio_prefix': settings.minio_prefix,
@@ -64,10 +66,16 @@ def test_approved_resources_enable_rehearsal(
         {'analysis_load': False},
         {'environment': 'staging'},
         {'bulletin_authorization_file': None},
+        {'bulletin_history_database_url': None},
+        {
+            'bulletin_history_database_url': 'postgresql://history@staging-db/dengue'
+        },
         {'minio_prefix': ''},
         {'minio_prefix': '../unsafe/'},
         {'minio_bucket': 'production-bucket'},
-        {'bulletin_analysis_database_identity': 'production-db:5432/dengue'},
+        {
+            'bulletin_history_database_url': 'postgresql://history@production-db/dengue'
+        },
         {'bulletin_renderer_revision': 'other-revision'},
     ],
 )
@@ -115,5 +123,3 @@ def test_rehearsal_acceptance_rejects_normal_production(
         validate_rehearsal_e2e(
             'recife/object.dbf', 'a' * 64, 30, _settings(tmp_path / 'missing')
         )
-
-

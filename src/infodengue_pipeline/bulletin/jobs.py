@@ -48,6 +48,7 @@ class BulletinJobService:
         config: Path,
         output_root: Path,
         source_database_url: str | None,
+        history_database_url: str | None = None,
         render: Render = run,
     ) -> None:
         self._sessions = sessions
@@ -57,6 +58,7 @@ class BulletinJobService:
         self._config = config
         self._output_root = output_root
         self._source_database_url = source_database_url
+        self._history_database_url = history_database_url
         self._render = render
 
     def _eligible(self, week: Epiweek, analysis_id: UUID) -> bool:
@@ -196,13 +198,16 @@ class BulletinJobService:
         try:
             if self._source_database_url is None:
                 raise ValueError('bulletin source database is not configured')
-            manifest = self._render(
+            options = dict(
                 week=week,
                 reference=self._reference,
                 output_root=self._output_root,
                 config=self._config,
                 database_url=self._source_database_url,
             )
+            if self._history_database_url is not None:
+                options['history_database_url'] = self._history_database_url
+            manifest = self._render(**options)
             payload = json.loads(manifest.read_text(encoding='utf-8'))
             pdf = Path(payload['outputs']['pdf'])
             if (

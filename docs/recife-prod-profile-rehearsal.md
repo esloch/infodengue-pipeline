@@ -20,7 +20,8 @@ to the existing issue #17 settings:
 INFODENGUE_PIPELINE_ENVIRONMENT=prod
 INFODENGUE_PIPELINE_ANALYSIS_LOAD=true
 INFODENGUE_PIPELINE_BULLETIN_ENABLED=true
-INFODENGUE_PIPELINE_BULLETIN_ANALYSIS_DATABASE_IDENTITY=<staging-host>:5432/<db>
+INFODENGUE_PIPELINE_ALERTA_SOURCE_DATABASE_URL=<read-only original staging source>
+INFODENGUE_PIPELINE_BULLETIN_HISTORY_DATABASE_URL=<read-only isolated scientific target>
 PIPELINE_BULLETIN_IMAGE=<reviewed immutable bulletin image>
 PROD_ANALYSIS_OUTPUT_HOST_PATH=<dedicated staging analysis directory>
 PROD_BULLETIN_OUTPUT_HOST_PATH=<dedicated staging bulletin directory>
@@ -29,11 +30,12 @@ RECIFE_REFERENCE_FILE=<approved neighborhood sf RDS filename>
 BULLETIN_AUTH_HOST_PATH=<absolute path to reviewed authorization JSON>
 ```
 
-The analysis worker's private env file must also use `analysis_load=true` and
-the same staging analysis target. The core worker/Beat env file carries only
-its nonsecret host, port and database identity. Confirm that identity matches
-the analysis worker's actual URL during preflight. Beat and the bulletin worker
-use the same core env file and
+The analysis worker's private env file must use `analysis_load=true` and a
+write-capable URL for the isolated scientific target. The core/Beat and
+bulletin worker env file carries read-only URLs for the original source and
+the same isolated target. Ingestion correlation and notification extraction
+use the original source; readiness and rendering read post-load history from
+the target. Beat and the bulletin worker use the same core env file and
 the same read-only authorization manifest mount. The normal production values
 are `bulletin_enabled=false`, `analysis_load=false`, and a `/dev/null` manifest.
 
@@ -44,8 +46,8 @@ outside the repository. Its complete schema is:
 {
   "profile": "isolated-staging-rehearsal",
   "pipeline_database": "pipeline-postgres:5432/pipeline_prod",
-  "source_database": "<verified-staging-host>:5432/<staging-db>",
-  "analysis_database": "<verified-staging-host>:5432/<staging-db>",
+  "source_database": "<verified-original-source>:5432/<source-db>",
+  "analysis_database": "<verified-isolated-target>:5432/<target-db>",
   "minio_endpoint": "<verified-staging-minio-host>:9000",
   "minio_bucket": "<verified-exclusive-staging-bucket>",
   "minio_prefix": "<verified-exclusive-prefix>/",
@@ -55,7 +57,7 @@ outside the repository. Its complete schema is:
 
 These are identity examples, not approved endpoints. The application requires
 an exact JSON match, a nonempty prefix, `environment=prod`, both explicit
-switches, and the same staging source and analysis database identity. Missing
+switches, and distinct approved staging source and target identities. Missing
 or inconsistent settings fail closed. The manifest is an authorization record,
 not proof of isolation by itself. Before creating it, probe the databases
 through their separate runtime roles and verify the actual server identity
@@ -82,15 +84,29 @@ docker run --rm --network <verified-staging-network> \
   python -m infodengue_pipeline.production.validate rehearsal-source
 docker run --rm --network <verified-staging-network> \
   --env-file <private-analysis-env-file> <reviewed-analysis-image-digest> \
-  python -m infodengue_pipeline.production.validate rehearsal-analysis
+  python -m infodengue_pipeline.production.validate rehearsal-analysis \
+  > /tmp/recife-writer-probe.json
+docker run --rm --network <verified-staging-network> \
+  --env-file <private-core-env-file> <reviewed-core-image-digest> \
+  python -m infodengue_pipeline.production.validate rehearsal-history \
+  > /tmp/recife-history-probe.json
+uv run python -m infodengue_pipeline.production.validate rehearsal-target \
+  --writer-probe /tmp/recife-writer-probe.json \
+  --history-probe /tmp/recife-history-probe.json \
+  --approved-database <DBA-approved-database> \
+  --approved-address <DBA-approved-server-address> \
+  --approved-port <DBA-approved-server-port>
 ```
 
-Both probes must report the same server-reported `database`,
-`server_address`, and `server_port`, and these values must match the
-independently verified staging PostgreSQL instance. The source role must have
+The target comparison requires both server-reported identities to equal the
+independently approved staging target. Compare the source probe separately
+with its approved source identity and confirm it differs from the target.
+The source role must have
 `SELECT` but no write grants on notifications and historical tables. The
 analysis role must have `SELECT`, `INSERT`, and `UPDATE` on both historical
-tables and a writable session. The probes issue only `SELECT` statements;
+tables and a writable session. The history role requires a read-only session,
+`SELECT` on both histories, and no `INSERT`, `UPDATE`, or `DELETE` grants.
+The probes issue only `SELECT` statements;
 they do not prove whether unrelated staging processes can overwrite results.
 
 The staging DBA must also verify that the analysis
@@ -99,7 +115,7 @@ state, has sufficient disk, has a tested backup/recovery procedure, and grants
 the analysis role only the required writes. Inspect SQL produced by the pinned
 AlertaDengueAnalise image: `pipeline.refresh-alertas-job --load true` applies
 `output_dengue.sql` and `output_chik.sql` to its `ALERTA_DB_*` target. Confirm
-that the renderer's source URL reads the same target, including
+that the bulletin history URL reads the same target, including
 `Municipio.Historico_alerta` and `Municipio.Historico_alerta_chik`. The
 analysis worker uses a PostgreSQL advisory lock, but other staging writers may
 not honor it; exclude them for the test window. If any condition is unverified,

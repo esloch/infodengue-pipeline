@@ -38,11 +38,12 @@ def main() -> None:
     if result.coverage.value != 'PE':
         raise RuntimeError('selected ingestion did not produce PE coverage')
     source = settings.alerta_source_database_url
-    if source is None:
-        raise RuntimeError('source database is not configured')
+    history = settings.bulletin_history_database_url
+    if source is None or history is None:
+        raise RuntimeError('bulletin database URLs are not configured')
     sessions = session_factory()
     readiness = CheckBulletinReadiness(
-        sessions, source.get_secret_value()
+        sessions, source.get_secret_value(), history.get_secret_value()
     ).check(week, settings.bulletin_reference, settings.bulletin_config)
     if not readiness.eligible or readiness.analysis_job_id != result.job_id:
         reasons = '; '.join(readiness.reasons) or 'analysis job mismatch'
@@ -53,8 +54,7 @@ def main() -> None:
             rows = session.scalars(
                 select(BulletinJobRow).where(
                     BulletinJobRow.analysis_job_id == result.job_id,
-                    BulletinJobRow.kind
-                    == BulletinKind.RECIFE_INTRAMUNICIPAL,
+                    BulletinJobRow.kind == BulletinKind.RECIFE_INTRAMUNICIPAL,
                     BulletinJobRow.municipality_geocode == 2611606,
                     BulletinJobRow.renderer_revision
                     == settings.bulletin_renderer_revision,

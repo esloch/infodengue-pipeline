@@ -41,9 +41,11 @@ class CheckBulletinReadiness:
         self,
         sessions: sessionmaker[Session],
         source_database_url: str | None,
+        history_database_url: str | None = None,
     ) -> None:
         self._sessions = sessions
         self._source_database_url = source_database_url
+        self._history_database_url = history_database_url
 
     def check(
         self,
@@ -161,9 +163,16 @@ class CheckBulletinReadiness:
             reasons.append('alert source database URL is not configured')
         else:
             try:
-                load_validated_source_data(
-                    self._source_database_url, int(epiweek)
-                )
+                if self._history_database_url is None:
+                    load_validated_source_data(
+                        self._source_database_url, int(epiweek)
+                    )
+                else:
+                    load_validated_source_data(
+                        self._source_database_url,
+                        int(epiweek),
+                        self._history_database_url,
+                    )
             except ValueError as exc:
                 reasons.append(
                     f'current renderer database inputs are invalid ({exc})'

@@ -50,7 +50,8 @@ NOTIFICATION_SQL = text("""
     WHERE municipio_geocodigo = :geocode
       AND upper(replace(cid10_codigo, '.', '')) IN ('A90', 'A920')
       AND CASE
-        WHEN ano_notif ~ '^[0-9]{4}$' AND se_notif ~ '^[0-9]{1,2}$'
+        WHEN ano_notif::text ~ '^[0-9]{4}$'
+         AND se_notif::text ~ '^[0-9]{1,2}$'
         THEN ano_notif::integer < :year OR
              (ano_notif::integer = :year AND se_notif::integer <= :week)
         ELSE TRUE
@@ -184,7 +185,7 @@ def validate_config(config: Path) -> dict[str, Any]:
 
 
 def load_validated_source_data(
-    database_url: str, last_week: int
+    database_url: str, last_week: int, history_database_url: str | None = None
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -192,9 +193,14 @@ def load_validated_source_data(
     int,
 ]:
     """Read and validate the same DB inputs consumed by QMD generation."""
-    notifications, history, chik_history = export_from_database(
-        database_url, last_week
-    )
+    if history_database_url is None:
+        notifications, history, chik_history = export_from_database(
+            database_url, last_week
+        )
+    else:
+        notifications, history, chik_history = export_from_database(
+            database_url, last_week, history_database_url
+        )
     validate_notifications(notifications, last_week)
     population = validate_history(history, last_week)
     has_chikungunya = any(
@@ -222,9 +228,9 @@ def _hash(path: Path) -> str:
 
 
 def export_from_database(
-    url: str, last_week: int
+    url: str, last_week: int, history_url: str | None = None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    """Take a read-only consistent snapshot from the existing source DB."""
+    """Read notifications from source and history from the loaded target."""
     engine = create_engine(url, poolclass=NullPool, hide_parameters=True)
     try:
         with engine.connect() as connection:
@@ -243,16 +249,40 @@ def export_from_database(
                     NOTIFICATION_SQL, params
                 ).mappings()
             ]
-            history = [
-                dict(row)
-                for row in connection.execute(HISTORY_SQL, params).mappings()
-            ]
-            chik_history = [
-                dict(row)
-                for row in connection.execute(
-                    CHIK_HISTORY_SQL, params
-                ).mappings()
-            ]
+            if history_url is None or history_url == url:
+                history_connection = connection
+                history_engine = None
+            else:
+                history_engine = create_engine(
+                    history_url, poolclass=NullPool, hide_parameters=True
+                )
+                try:
+                    history_connection = history_engine.connect()
+                except Exception:
+                    history_engine.dispose()
+                    raise
+            try:
+                if history_engine is not None:
+                    history_connection.exec_driver_sql(
+                        'SET TRANSACTION ISOLATION LEVEL '
+                        'REPEATABLE READ READ ONLY'
+                    )
+                history = [
+                    dict(row)
+                    for row in history_connection.execute(
+                        HISTORY_SQL, params
+                    ).mappings()
+                ]
+                chik_history = [
+                    dict(row)
+                    for row in history_connection.execute(
+                        CHIK_HISTORY_SQL, params
+                    ).mappings()
+                ]
+            finally:
+                if history_engine is not None:
+                    history_connection.close()
+                    history_engine.dispose()
             connection.rollback()
         return notifications, history, chik_history
     finally:
@@ -266,6 +296,7 @@ def run(
     output_root: Path,
     config: Path,
     database_url: str,
+    history_database_url: str | None = None,
     rscript: str = 'Rscript',
     quarto: str = 'quarto',
     render: bool = True,
@@ -296,7 +327,9 @@ def run(
             history,
             chik_history,
             population,
-        ) = load_validated_source_data(database_url, week)
+        ) = load_validated_source_data(
+            database_url, week, history_database_url
+        )
         has_chikungunya = any(
             str(row['cid10_codigo']).upper().replace('.', '') == 'A920'
             for row in notifications
@@ -304,8 +337,7 @@ def run(
         notification_path = directory / 'notifications.csv'
         history_path = directory / 'history_dengue.csv'
         chikungunya_path = (
-            directory / 'history_chikungunya.csv'
-            if has_chikungunya else None
+            directory / 'history_chikungunya.csv' if has_chikungunya else None
         )
         _csv(notification_path, notifications, NOTIFICATION_COLUMNS)
         _csv(history_path, history, HISTORY_COLUMNS)
@@ -330,9 +362,7 @@ def run(
                 chikungunya_path
             )
             manifest['row_counts']['history_chikungunya'] = len(chik_history)
-            manifest['outputs']['history_chikungunya'] = str(
-                chikungunya_path
-            )
+            manifest['outputs']['history_chikungunya'] = str(chikungunya_path)
         qmd = directory / 'bulletin.qmd'
         command = [
             rscript,

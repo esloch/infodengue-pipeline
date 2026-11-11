@@ -192,7 +192,12 @@ def test_rehearsal_probes_actual_identity_and_grants(
     engine = MagicMock()
     connection = engine.connect.return_value.__enter__.return_value
     connection.execute.return_value.one.return_value = (
-        'dengue', '10.0.0.8', 5432, 'stage_reader', 'off', False
+        'dengue',
+        '10.0.0.8',
+        5432,
+        'stage_reader',
+        'off',
+        False,
     )
     connection.scalar.side_effect = [
         privilege == 'SELECT'
@@ -222,7 +227,12 @@ def test_rehearsal_rejects_unexpected_grants_and_readonly_target(
     engine = MagicMock()
     connection = engine.connect.return_value.__enter__.return_value
     connection.execute.return_value.one.return_value = (
-        'dengue', '10.0.0.8', 5432, 'stage_user', 'off', False
+        'dengue',
+        '10.0.0.8',
+        5432,
+        'stage_user',
+        'off',
+        False,
     )
     connection.scalar.side_effect = [True, True]
     monkeypatch.setattr(probes, 'create_engine', lambda *_a, **_k: engine)
@@ -231,7 +241,12 @@ def test_rehearsal_rejects_unexpected_grants_and_readonly_target(
             'rehearsal-source', settings(tmp_path)
         )
     connection.execute.return_value.one.return_value = (
-        'dengue', '10.0.0.8', 5432, 'stage_user', 'on', False
+        'dengue',
+        '10.0.0.8',
+        5432,
+        'stage_user',
+        'on',
+        False,
     )
     with pytest.raises(RuntimeError, match='grants invalid'):
         probes.inspect_rehearsal_database(
@@ -246,7 +261,12 @@ def test_rehearsal_analysis_requires_history_write_grants(
     engine = MagicMock()
     connection = engine.connect.return_value.__enter__.return_value
     connection.execute.return_value.one.return_value = (
-        'dengue', '10.0.0.8', 5432, 'stage_writer', 'off', False
+        'dengue',
+        '10.0.0.8',
+        5432,
+        'stage_writer',
+        'off',
+        False,
     )
     connection.scalar.side_effect = [True] * 6
     monkeypatch.setattr(probes, 'create_engine', lambda *_a, **_k: engine)
@@ -256,6 +276,68 @@ def test_rehearsal_analysis_requires_history_write_grants(
     assert result['current_user'] == 'stage_writer'
     assert connection.scalar.call_count == 6
     engine.dispose.assert_called_once_with()
+
+
+def test_history_probe_requires_readonly_and_select_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """History extraction cannot use a writable session or table role."""
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    monkeypatch.setattr(probes, 'create_engine', lambda *_a, **_k: engine)
+    config = settings(
+        tmp_path,
+        bulletin_history_database_url='postgresql://reader@target/dengue',
+    )
+    connection.execute.return_value.one.return_value = (
+        'dengue',
+        '10.0.0.8',
+        5432,
+        'history_reader',
+        'off',
+        False,
+    )
+    with pytest.raises(RuntimeError, match='grants invalid'):
+        probes.inspect_rehearsal_database('rehearsal-history', config)
+    connection.execute.return_value.one.return_value = (
+        'dengue',
+        '10.0.0.8',
+        5432,
+        'history_reader',
+        'on',
+        False,
+    )
+    connection.scalar.side_effect = [True, True]
+    with pytest.raises(RuntimeError, match='grants invalid'):
+        probes.inspect_rehearsal_database('rehearsal-history', config)
+    connection.scalar.side_effect = [
+        privilege == 'SELECT'
+        for _table in range(2)
+        for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+    ]
+    result = probes.inspect_rehearsal_database('rehearsal-history', config)
+    assert result['role'] == 'rehearsal-history'
+
+
+def test_target_comparison_requires_both_approved_live_identities() -> None:
+    """Reader and writer must each match the separate DBA approval."""
+    writer = {
+        'role': 'rehearsal-analysis',
+        'database': 'target',
+        'server_address': '10.0.0.8',
+        'server_port': 5432,
+    }
+    reader = {**writer, 'role': 'rehearsal-history'}
+    approved = ('target', '10.0.0.8', 5432)
+    probes.verify_rehearsal_target(writer, reader, approved)
+    with pytest.raises(ValueError, match='does not match'):
+        probes.verify_rehearsal_target(
+            writer, {**reader, 'server_address': '10.0.0.9'}, approved
+        )
+    with pytest.raises(ValueError, match='does not match'):
+        probes.verify_rehearsal_target(
+            writer, reader, ('production', '10.0.0.8', 5432)
+        )
 
 
 def test_database_revision_failure_disposes_engine(
