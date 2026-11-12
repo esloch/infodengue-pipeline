@@ -1,5 +1,5 @@
 ARG ALERTA_ANALYSIS_BASE_IMAGE
-ARG ALERTA_ANALYSIS_REVISION=27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+ARG ALERTA_ANALYSIS_REVISION=78114fbd497e3b447c942590361a860ea5fa241f
 
 FROM ghcr.io/astral-sh/uv:0.11.14 AS uv
 
@@ -20,8 +20,17 @@ FROM ${ALERTA_ANALYSIS_BASE_IMAGE}
 
 ARG ALERTA_ANALYSIS_REVISION
 RUN test "${ALERTA_ANALYSIS_REVISION}" = \
-      "27a03f26a9bf366597ef135e7da8d2f620ea9a8e"
+      "78114fbd497e3b447c942590361a860ea5fa241f"
 LABEL org.infodengue.alertadengueanalise.revision="${ALERTA_ANALYSIS_REVISION}"
+
+# Fail the build if the actual base image still loads diseases separately.
+RUN test -f /opt/alertadengueanalise/scripts/load_alertas.py \
+    && grep -q -- '--single-transaction' \
+      /opt/alertadengueanalise/scripts/load_alertas.py \
+    && grep -q 'ON_ERROR_STOP=1' \
+      /opt/alertadengueanalise/scripts/load_alertas.py \
+    && grep -q 'scripts/load_alertas.py' \
+      /opt/alertadengueanalise/.makim.yaml
 
 COPY --from=wheel-builder /dist/ /tmp/pipeline-dist/
 

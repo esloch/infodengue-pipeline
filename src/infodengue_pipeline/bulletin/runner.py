@@ -3,10 +3,11 @@
 import argparse
 import csv
 import json
+import os
 import subprocess  # nosec B404
 import sys
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,9 @@ NOTIFICATION_SQL = text("""
            dt_notific, dt_sin_pri, dt_digita, id_bairro, nm_bairro
     FROM "Municipio"."Notificacao"
     WHERE municipio_geocodigo = :geocode
-      AND upper(replace(cid10_codigo, '.', '')) IN ('A90', 'A920')
+      AND upper(replace(cid10_codigo, '.', '')) IN ('A90', 'A92', 'A920')
+      AND dt_digita >= :digitization_start
+      AND dt_digita < :digitization_end_exclusive
       AND CASE
         WHEN ano_notif::text ~ '^[0-9]{4}$'
          AND se_notif::text ~ '^[0-9]{1,2}$'
@@ -56,7 +59,8 @@ NOTIFICATION_SQL = text("""
              (ano_notif::integer = :year AND se_notif::integer <= :week)
         ELSE TRUE
       END
-    ORDER BY ano_notif, se_notif, nu_notific, cid10_codigo
+    ORDER BY ano_notif, se_notif, nu_notific, cid10_codigo,
+             dt_notific, dt_sin_pri, dt_digita, id_bairro, nm_bairro
 """)
 HISTORY_SQL = text("""
     SELECT "SE", "data_iniSE", casos, p_inc100k, nivel, "Rt", casos_est,
@@ -91,11 +95,72 @@ def _week(value: object) -> int:
     return int(raw)
 
 
+def digitization_end_exclusive(last_week: int) -> date:
+    """Return the day after the selected CDC epidemiological week ends."""
+    from epiweeks import Week
+
+    selected = _week(last_week)
+    return Week(selected // 100, selected % 100, system='cdc').enddate() + (
+        timedelta(days=1)
+    )
+
+
+DIGITIZATION_START = date(2018, 1, 1)
+
+
+def _source_date(value: object) -> date | None:
+    """Parse a source date for validation and coverage reporting."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def notification_coverage(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Report source coverage without redefining scientific cases."""
+    missing_onset = 0
+    invalid_onset = 0
+    missing_neighborhood_id = 0
+    missing_neighborhood_name = 0
+    neighborhood_ids: set[str] = set()
+    for row in rows:
+        onset = _source_date(row.get('dt_sin_pri'))
+        notified = _source_date(row.get('dt_notific'))
+        if row.get('dt_sin_pri') is None or row.get('dt_sin_pri') == '':
+            missing_onset += 1
+        elif (
+            onset is None
+            or notified is None
+            or not 0 <= (notified - onset).days <= 365
+        ):
+            invalid_onset += 1
+        neighborhood_id = str(row.get('id_bairro') or '').strip()
+        if neighborhood_id:
+            neighborhood_ids.add(neighborhood_id)
+        else:
+            missing_neighborhood_id += 1
+        if not str(row.get('nm_bairro') or '').strip():
+            missing_neighborhood_name += 1
+    return {
+        'missing_onset_dates': missing_onset,
+        'invalid_onset_dates': invalid_onset,
+        'missing_neighborhood_ids': missing_neighborhood_id,
+        'missing_neighborhood_names': missing_neighborhood_name,
+        'distinct_neighborhood_ids': len(neighborhood_ids),
+    }
+
+
 def validate_notifications(rows: list[dict[str, Any]], last_week: int) -> None:
-    """Require usable, unique source notifications for the chosen period."""
+    """Require usable notifications for the historical snapshot."""
     if not rows:
         raise ValueError('no Recife notifications for the selected period')
-    seen: set[tuple[str, str]] = set()
+    cutoff = digitization_end_exclusive(last_week)
     latest = 0
     for row in rows:
         missing = set(NOTIFICATION_COLUMNS) - row.keys()
@@ -106,15 +171,10 @@ def validate_notifications(rows: list[dict[str, Any]], last_week: int) -> None:
         if int(row['municipio_geocodigo']) != GEOCODE:
             raise ValueError('notification outside Recife')
         disease_code = str(row['cid10_codigo']).upper().replace('.', '')
-        if disease_code not in {'A90', 'A920'}:
+        if disease_code not in {'A90', 'A92', 'A920'}:
             raise ValueError('unsupported notification disease')
-        identifier = str(row['nu_notific'] or '')
-        if not identifier:
+        if not str(row['nu_notific'] or '').strip():
             raise ValueError('notification identifier missing')
-        key = disease_code, identifier
-        if key in seen:
-            raise ValueError('duplicate notification identifier per disease')
-        seen.add(key)
         year = str(row['ano_notif'] or '')
         week = str(row['se_notif'] or '')
         if len(year) != 4 or not year.isdecimal() or not week.isdecimal():
@@ -125,6 +185,15 @@ def validate_notifications(rows: list[dict[str, Any]], last_week: int) -> None:
         latest = max(latest, epiweek)
         if not row['dt_notific']:
             raise ValueError('notification date missing')
+        if not row['dt_digita']:
+            raise ValueError('digitization date missing')
+        digitized = _source_date(row['dt_digita'])
+        if digitized is None:
+            raise ValueError('digitization date invalid')
+        if digitized < DIGITIZATION_START:
+            raise ValueError('digitization before historical window')
+        if digitized >= cutoff:
+            raise ValueError('digitization after reference period')
     if latest != last_week:
         raise ValueError('no notifications in the reference week')
 
@@ -204,7 +273,7 @@ def load_validated_source_data(
     validate_notifications(notifications, last_week)
     population = validate_history(history, last_week)
     has_chikungunya = any(
-        str(row['cid10_codigo']).upper().replace('.', '') == 'A920'
+        str(row['cid10_codigo']).upper().replace('.', '') in {'A92', 'A920'}
         for row in notifications
     )
     if has_chikungunya:
@@ -242,6 +311,10 @@ def export_from_database(
                 'year': last_week // 100,
                 'last_week': last_week,
                 'week': last_week % 100,
+                'digitization_start': DIGITIZATION_START,
+                'digitization_end_exclusive': digitization_end_exclusive(
+                    last_week
+                ),
             }
             notifications = [
                 dict(row)
@@ -314,9 +387,14 @@ def run(
         'municipality': 'Recife',
         'geocode': GEOCODE,
         'reference_week': week,
+        'digitization_start': DIGITIZATION_START.isoformat(),
+        'digitization_end_exclusive': digitization_end_exclusive(
+            week
+        ).isoformat(),
         'started_at': datetime.now(timezone.utc).isoformat(),
         'status': 'started',
         'package_version': None,
+        'renderer_revision': os.getenv('INTRAMUNICIPAL_REVISION'),
         'input_hashes': {},
         'outputs': {},
     }
@@ -331,7 +409,8 @@ def run(
             database_url, week, history_database_url
         )
         has_chikungunya = any(
-            str(row['cid10_codigo']).upper().replace('.', '') == 'A920'
+            str(row['cid10_codigo']).upper().replace('.', '')
+            in {'A92', 'A920'}
             for row in notifications
         )
         notification_path = directory / 'notifications.csv'
@@ -353,6 +432,9 @@ def run(
             'notifications': len(notifications),
             'history_dengue': len(history),
         }
+        manifest['notification_coverage'] = notification_coverage(
+            notifications
+        )
         manifest['outputs'] = {
             'notifications': str(notification_path),
             'history_dengue': str(history_path),
@@ -376,7 +458,9 @@ def run(
             str(week // 100),
             str(population),
         ]
-        with (directory / 'generate.log').open('x') as log:
+        generate_log = directory / 'generate.log'
+        manifest['outputs']['generate_log'] = str(generate_log)
+        with generate_log.open('x') as log:
             subprocess.run(
                 command,
                 check=True,
@@ -391,7 +475,9 @@ def run(
         )
         manifest['outputs']['qmd'] = str(qmd)
         if render:
-            with (directory / 'render.log').open('x') as log:
+            render_log = directory / 'render.log'
+            manifest['outputs']['render_log'] = str(render_log)
+            with render_log.open('x') as log:
                 subprocess.run(
                     [quarto, 'render', str(qmd), '--to', 'pdf'],
                     cwd=directory,
@@ -451,6 +537,11 @@ def main() -> None:
             output_root=args.output_root,
             config=args.config,
             database_url=settings.alerta_source_database_url.get_secret_value(),
+            history_database_url=(
+                settings.bulletin_history_database_url.get_secret_value()
+                if settings.bulletin_history_database_url is not None
+                else None
+            ),
             render=not args.qmd_only,
         )
     except Exception as exc:

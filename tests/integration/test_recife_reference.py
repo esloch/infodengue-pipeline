@@ -68,6 +68,8 @@ def test_reference_requires_exact_reviewed_mapping(tmp_path: Path) -> None:
         'population_year': 2022,
         'approved_by': 'reviewer',
         'expected_neighborhoods': 2,
+        'expected_districts': 2,
+        'expected_population': 300,
     }
     manifest_path = tmp_path / 'manifest.json'
     output = tmp_path / 'reference.rds'
@@ -81,6 +83,23 @@ def test_reference_requires_exact_reviewed_mapping(tmp_path: Path) -> None:
     assert run.returncode == 0, run.stderr
     assert output.stat().st_size > 0
     assert (tmp_path / 'reference.rds.provenance.json').is_file()
+    provenance = json.loads(
+        (tmp_path / 'reference.rds.provenance.json').read_text()
+    )
+    assert provenance['districts'] == 2
+    assert provenance['population_sum'] == 300
+    assert provenance['output_sha256'] == _sha(output)
+    manifest['expected_population'] = 301
+    manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
+    wrong_population = subprocess.run(
+        ['Rscript', str(SCRIPT), str(manifest_path), str(output)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert wrong_population.returncode != 0
+    assert 'population' in wrong_population.stderr
+    manifest['expected_population'] = 300
     with mapping.open('w', newline='', encoding='utf-8') as stream:
         writer = csv.writer(stream)
         writer.writerows(

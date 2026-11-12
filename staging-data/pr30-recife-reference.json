@@ -1,0 +1,11 @@
+{
+  "source_path": "AlertaDengue/intramunicipal/recife/ref_RF.RData",
+  "source_sha256": "5a4262f62d750007ea61eaa6425e4c06071fdee5ce57000003898e4a6b45c26e",
+  "adapted_filename": "recife_bairros.rds",
+  "adapted_sha256": "4c59f5c1f0071d652ed470a5472432e269c2bcceb0a18c584887e12c583b8b7e",
+  "expected_neighborhoods": 94,
+  "expected_districts": 6,
+  "expected_population": 1540874,
+  "approval_status": "not documented",
+  "adaptation_method": "existing staging adaptation; exact transformation inputs and steps not archived here"
+}

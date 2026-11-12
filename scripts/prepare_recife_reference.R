@@ -68,6 +68,14 @@ if (anyNA(order) || any(!mapping$nm_bairro %in% geo$nm_bairro)) {
 geo$id_bairro <- mapping$id_bairro[order]
 geo$distrito <- mapping$distrito[order]
 geo$pop <- as.numeric(mapping$pop[order])
+if (!is.null(manifest$expected_districts) &&
+    length(unique(geo$distrito)) != manifest$expected_districts) {
+  stop('unexpected Recife RPA count')
+}
+if (!is.null(manifest$expected_population) &&
+    sum(geo$pop) != manifest$expected_population) {
+  stop('reference population differs from reviewed geographic source')
+}
 out <- geo[, c('nm_bairro', 'id_bairro', 'distrito', 'pop',
                attr(geo, 'sf_column'))]
 names(out)[names(out) == attr(geo, 'sf_column')] <- 'geometry'
@@ -76,7 +84,10 @@ saveRDS(out, args[[2]])
 readback <- readRDS(args[[2]])
 if (!inherits(readback, 'sf') || nrow(readback) != nrow(geo) ||
     anyNA(readback[, c('nm_bairro', 'id_bairro', 'distrito', 'pop')]) ||
-    any(!sf::st_is_valid(readback))) {
+    any(!sf::st_is_valid(readback)) || any(sf::st_is_empty(readback)) ||
+    any(!as.character(sf::st_geometry_type(readback)) %in%
+        c('POLYGON', 'MULTIPOLYGON')) ||
+    is.na(sf::st_crs(readback)) || anyDuplicated(readback$id_bairro)) {
   stop('RDS read-back validation failed')
 }
 provenance <- list(source_url = manifest$source_url,
@@ -88,6 +99,8 @@ provenance <- list(source_url = manifest$source_url,
                    approved_by = manifest$approved_by,
                    transformations = c('UTF-8 trim', 'exact name join'),
                    neighborhoods = nrow(readback),
+                   districts = length(unique(readback$distrito)),
+                   population_sum = sum(readback$pop),
                    output_sha256 = digest::digest(file = args[[2]],
                                                    algo = 'sha256'))
 jsonlite::write_json(provenance, paste0(args[[2]], '.provenance.json'),
