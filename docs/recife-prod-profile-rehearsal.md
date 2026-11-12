@@ -11,10 +11,14 @@ The scientific dependency and DBA preparation procedure is in
 [`recife-scientific-data-contract.md`](recife-scientific-data-contract.md).
 The original staging database remains read-only. Provision and verify a new
 target before enabling a write-capable scientific role. The previously pinned
-image digests correspond to commit `89216ab` only; rebuild the core, analysis
-and bulletin images after code changes, inspect the actual scientific base,
-and record new digests tied to the final commit. No old digest proves this
-revision.
+image digests correspond to commit `89216ab` only. This change adds files
+under `scripts/`, which the core Dockerfile copies, so rebuild and verify the
+core image. The analysis and bulletin Dockerfiles copy `src/` (and selected
+existing scripts/configuration) but none of the changed files, so their image
+contents do not change from this commit. Rebuild those images only if their
+source, dependencies or scientific base change after review. Inspect the
+actual scientific base rather than relying on its label. Record exact digests
+and the source revision used for every image in the preflight evidence.
 
 The [Prefeitura do Recife area-urbana dataset](https://dados.recife.pe.gov.br/dataset/area-urbana)
 lists official neighborhood GeoJSON/SHP and a separate Bairro/RPA table under
