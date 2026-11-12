@@ -5,6 +5,93 @@ gates below. The code path uses the existing production Compose topology with
 `--profile bulletin`; the existing SINAN watcher remains the sole watcher.
 No publication task or destination is configured.
 
+## PR 30 data and preflight preparation
+
+The scientific dependency and DBA preparation procedure is in
+[`recife-scientific-data-contract.md`](recife-scientific-data-contract.md).
+The original staging database remains read-only. Provision and verify a new
+target before enabling a write-capable scientific role. The previously pinned
+image digests correspond to commit `89216ab` only; rebuild the core, analysis
+and bulletin images after code changes, inspect the actual scientific base,
+and record new digests tied to the final commit. No old digest proves this
+revision.
+
+The [Prefeitura do Recife area-urbana dataset](https://dados.recife.pe.gov.br/dataset/area-urbana)
+lists official neighborhood GeoJSON/SHP and a separate Bairro/RPA table under
+ODbL. Its resource page reports a 2 March 2026 update. This is an identified
+candidate, **not yet an approved reference**. The operator must download the
+reviewed resource, inspect its actual fields, CRS and geometry, and obtain a
+separately approved population source and exact neighborhood mapping. The
+script never assigns districts or population by guesswork. Prepare a private
+mapping CSV with `nm_bairro,id_bairro,distrito,pop`; every row must map exactly
+to one official polygon. Record the source for each ID, district and population
+value, the population year and reviewer. Hash the reviewed geometry and mapping
+files with `sha256sum`. Create a private JSON manifest containing:
+
+```json
+{
+  "geometry_file": "/absolute/reviewed/neighborhoods.geojson",
+  "geometry_sha256": "<actual 64-hex checksum>",
+  "mapping_file": "/absolute/reviewed/mapping.csv",
+  "mapping_sha256": "<actual 64-hex checksum>",
+  "name_column": "<inspected official neighborhood field>",
+  "source_url": "<actual official resource URL>",
+  "source_version": "<reviewed version/date>",
+  "population_source": "<approved source citation>",
+  "population_year": 2022,
+  "approved_by": "<reviewer identifier>",
+  "expected_neighborhoods": 94
+}
+```
+
+The count and year above are illustrative and require independent review.
+The script fails on missing fields, checksum mismatch, invalid CRS/geometry,
+duplicates, incomplete joins or missing/nonpositive population. It writes an
+`sf` RDS plus a provenance JSON:
+
+```sh
+test -s "$RECIFE_REFERENCE_MANIFEST"
+test -n "$RECIFE_REFERENCE_OUTPUT"
+Rscript scripts/prepare_recife_reference.R \
+  "$RECIFE_REFERENCE_MANIFEST" "$RECIFE_REFERENCE_OUTPUT"
+```
+
+Reconcile source `ID_BAIRRO` and normalized `NM_BAIRRO` against the reviewed
+reference by exact name and ID separately. Record aggregate matched,
+unmatched and ambiguous counts, notification coverage, duplicate keys and
+population coverage for the selected week. Resolve conflicts with a reviewed
+mapping; no fuzzy match is accepted automatically. Do not export individual
+notification records into the repository.
+
+Select genuine dengue and chikungunya objects whose ingestion metadata and
+epidemiological weeks satisfy the PE workflow. The reported 202643 dengue
+and 202644 chik CSV names alone do not establish a common selected week.
+Record each object key, SHA-256, size, disease and approved week. Verify its
+actual `ingestion.run` correlation and current Recife notifications before
+acceptance. Do not reupload a historic key to manufacture a fresh event.
+
+Copy `docs/recife-preflight-evidence.example.json` to a private operator
+location. Fill it only with safe metadata and independently reviewed Boolean
+attestations; never add credentials or raw SINAN records. Capture the source,
+writer and history JSON probes with the existing commands below, then insert
+their JSON objects into the evidence file. `approved_target` must come from
+the DBA inventory, not from either probe. `required_free_bytes` is the DBA's
+reviewed import, WAL and output allowance; `capacity_path` is the target
+filesystem mount. The script reads the local checkout and capacity but does
+not query Docker or credentials. Run it on the reviewed staging checkout:
+
+```sh
+test -s "$PR30_EVIDENCE_FILE"
+test -n "$PR30_PREFLIGHT_REPORT"
+python scripts/recife_preflight.py --evidence "$PR30_EVIDENCE_FILE" \
+  --json-output "$PR30_PREFLIGHT_REPORT"
+```
+
+Require `PASS` and review every check in the JSON report. A Boolean
+attestation is a record of an operator check, not a substitute for its host,
+database, image or MinIO evidence. Keep the report and supporting probes in a
+private evidence directory. A blocked check stops deployment and upload.
+
 ## Authorization and configuration
 
 Use a dedicated Compose project name and new, isolated pipeline PostgreSQL and
