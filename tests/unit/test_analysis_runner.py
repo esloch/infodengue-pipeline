@@ -370,6 +370,8 @@ def test_load_lock_is_held_and_released_for_complete_execution(
     """The load lock spans R, output validation, failure, and timeout."""
     settings = Settings(
         _env_file=None,
+        environment='prod',
+        analysis_load=True,
         analysis_database_url='postgresql://user:pass@db/alerta',
         analysis_output_root=tmp_path / 'outputs',
     )

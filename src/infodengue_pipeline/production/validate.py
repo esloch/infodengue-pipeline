@@ -1,10 +1,12 @@
 """Probe production-profile dependencies from their respective workers."""
 
 import argparse
+import json
 import os
 import re
 
 from collections.abc import Callable
+from pathlib import Path
 
 import urllib3
 
@@ -61,6 +63,122 @@ def check_database(url: str, *, migration: bool = False) -> None:
                 )
     finally:
         engine.dispose()
+
+
+def inspect_rehearsal_database(
+    role: str, settings: Settings
+) -> dict[str, object]:
+    """Read the reached PostgreSQL identity and required table grants."""
+    if role not in {
+        'rehearsal-source',
+        'rehearsal-analysis',
+        'rehearsal-history',
+    }:
+        raise ValueError('unknown rehearsal database role')
+    if settings.environment != 'prod':
+        raise ValueError('environment must be prod')
+    urls = {
+        'rehearsal-source': settings.alerta_source_database_url,
+        'rehearsal-analysis': settings.analysis_database_url,
+        'rehearsal-history': settings.bulletin_history_database_url,
+    }
+    url = urls[role]
+    if url is None:
+        raise ValueError(f'{role}: database URL is not configured')
+    try:
+        engine = create_engine(
+            url.get_secret_value(),
+            connect_args={
+                'connect_timeout': _PROBE_TIMEOUT_SECONDS,
+                'options': (
+                    f'-c statement_timeout={_PROBE_TIMEOUT_SECONDS * 1000}'
+                ),
+            },
+        )
+    except Exception as exc:
+        raise RuntimeError(f'{role}: database unavailable') from exc
+    try:
+        with engine.connect() as connection:
+            database, address, port, user, readonly, recovery = (
+                connection.execute(
+                    text(
+                        'SELECT current_database(), inet_server_addr()::text, '
+                        'inet_server_port(), current_user, '
+                        "current_setting('transaction_read_only'), "
+                        'pg_is_in_recovery()'
+                    )
+                ).one()
+            )
+            if not address or not port or recovery:
+                raise ValueError('database server identity is unavailable')
+            if role == 'rehearsal-analysis' and readonly != 'off':
+                raise ValueError('analysis database is read-only')
+            if role == 'rehearsal-history' and readonly != 'on':
+                raise ValueError('history database session is not read-only')
+            tables = ['Historico_alerta', 'Historico_alerta_chik']
+            if role == 'rehearsal-source':
+                tables.append('Notificacao')
+            required = (
+                {'SELECT', 'INSERT', 'UPDATE'}
+                if role == 'rehearsal-analysis'
+                else {'SELECT'}
+            )
+            for table in tables:
+                relation = f'"Municipio"."{table}"'
+                for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
+                    if role == 'rehearsal-analysis' and privilege == 'DELETE':
+                        continue
+                    granted = connection.scalar(
+                        text(
+                            'SELECT has_table_privilege('
+                            'current_user, :relation, :privilege)'
+                        ),
+                        {'relation': relation, 'privilege': privilege},
+                    )
+                    if bool(granted) != (privilege in required):
+                        raise ValueError(
+                            f'{role}: unexpected {privilege} grant on {table}'
+                        )
+            return {
+                'database': str(database),
+                'server_address': str(address),
+                'server_port': int(port),
+                'current_user': str(user),
+                'role': role,
+            }
+    except Exception as exc:
+        raise RuntimeError(
+            f'{role}: database identity or grants invalid'
+        ) from exc
+    finally:
+        engine.dispose()
+
+
+def verify_rehearsal_target(
+    writer: dict[str, object],
+    reader: dict[str, object],
+    approved: tuple[str, str, int],
+) -> None:
+    """Match both live probes to the independently approved target."""
+    if not isinstance(writer, dict) or not isinstance(reader, dict):
+        raise ValueError('rehearsal probe output is invalid')
+    writer_identity = (
+        writer.get('database'),
+        writer.get('server_address'),
+        writer.get('server_port'),
+    )
+    reader_identity = (
+        reader.get('database'),
+        reader.get('server_address'),
+        reader.get('server_port'),
+    )
+    if (
+        writer.get('role') != 'rehearsal-analysis'
+        or reader.get('role') != 'rehearsal-history'
+        or writer_identity != approved
+        or reader_identity != approved
+    ):
+        raise ValueError('rehearsal target identity does not match approval')
 
 
 def validate(role: str, settings: Settings) -> list[str]:
@@ -155,9 +273,50 @@ def validate(role: str, settings: Settings) -> list[str]:
 def main() -> None:
     """Run worker probes without printing exception details or secrets."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('role', choices=('ingestion', 'analysis'))
-    role = parser.parse_args().role
+    parser.add_argument(
+        'role',
+        choices=(
+            'ingestion',
+            'analysis',
+            'rehearsal-source',
+            'rehearsal-analysis',
+            'rehearsal-history',
+            'rehearsal-target',
+        ),
+    )
+    parser.add_argument('--writer-probe', type=Path)
+    parser.add_argument('--history-probe', type=Path)
+    parser.add_argument('--approved-database')
+    parser.add_argument('--approved-address')
+    parser.add_argument('--approved-port', type=int)
+    args = parser.parse_args()
+    role = args.role
     try:
+        if role == 'rehearsal-target':
+            if not all(
+                (
+                    args.writer_probe,
+                    args.history_probe,
+                    args.approved_database,
+                    args.approved_address,
+                    args.approved_port,
+                )
+            ):
+                raise ValueError('rehearsal target inputs are required')
+            verify_rehearsal_target(
+                json.loads(args.writer_probe.read_text(encoding='utf-8')),
+                json.loads(args.history_probe.read_text(encoding='utf-8')),
+                (
+                    args.approved_database,
+                    args.approved_address,
+                    args.approved_port,
+                ),
+            )
+            print('rehearsal target identity: approved', flush=True)
+            return
+        if role.startswith('rehearsal-'):
+            print(json.dumps(inspect_rehearsal_database(role, get_settings())))
+            return
         for result in validate(role, get_settings()):
             print(result, flush=True)
     except (ValueError, RuntimeError) as exc:

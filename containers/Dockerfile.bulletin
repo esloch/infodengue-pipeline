@@ -1,0 +1,29 @@
+# Manual-only scientific runner. Build from the already isolated analysis image.
+ARG PIPELINE_ANALYSIS_IMAGE=infodengue-pipeline-analysis:dev
+FROM ${PIPELINE_ANALYSIS_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
+
+ARG INTRAMUNICIPAL_REVISION=fe82d1d5f6caf0a91aca585f0385cf1abea2e953
+ARG QUARTO_VERSION=1.11.9
+ARG QUARTO_SHA256=64078d1623d9ab89da766591f3410a0756f3737a37efb0897c7e84b863bf092a
+ENV INTRAMUNICIPAL_REVISION=${INTRAMUNICIPAL_REVISION}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl xz-utils && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL -o /tmp/quarto.deb \
+      "https://github.com/quarto-dev/quarto-cli/releases/download/v${QUARTO_VERSION}/quarto-${QUARTO_VERSION}-linux-amd64.deb" \
+    && echo "${QUARTO_SHA256}  /tmp/quarto.deb" | sha256sum -c - \
+    && dpkg -i /tmp/quarto.deb && rm /tmp/quarto.deb
+RUN quarto install tinytex --no-prompt
+RUN Rscript -e 'install.packages(c("fuzzyjoin", "ggpubr", "gt", "patchwork"), repos="https://cloud.r-project.org")' \
+    && Rscript -e 'remotes::install_github(paste0("AlertaDengue/infodengue_intramunicipal@", Sys.getenv("INTRAMUNICIPAL_REVISION")), dependencies=NA, upgrade="never")' \
+    && Rscript -e 'stopifnot(requireNamespace("infodengueintramunicipal", quietly=TRUE)); ns <- asNamespace("infodengueintramunicipal"); stopifnot("criar_qmd_boletim" %in% getNamespaceExports("infodengueintramunicipal"), is.function(get("criar_qmd_boletim", envir=ns))); fixture <- system.file("extdata", "feira_livre", "shape", "feira_livre_bairros.shp", package="infodengueintramunicipal"); stopifnot(nzchar(fixture), file.exists(fixture))'
+
+COPY pyproject.toml README.md LICENSE /tmp/bulletin-src/
+COPY src /tmp/bulletin-src/src
+RUN python -m pip install --no-cache-dir --no-deps /tmp/bulletin-src \
+    && rm -rf /tmp/bulletin-src
+COPY configs /opt/alertadengueanalise/configs
+COPY scripts/run_prod_bulletin_acceptance.py /opt/alertadengueanalise/scripts/run_prod_bulletin_acceptance.py
+WORKDIR /opt/alertadengueanalise
+ENV PROJ_DATA=/opt/conda/envs/alertadengueanalise/share/proj

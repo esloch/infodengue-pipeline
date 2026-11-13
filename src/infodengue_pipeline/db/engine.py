@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from infodengue_pipeline.config import get_settings
 from infodengue_pipeline.db.repositories import (
+    SqlBulletinJobRepository,
     SqlOutboxRepository,
     SqlWorkflowRepository,
 )
@@ -26,6 +27,7 @@ class SqlUnitOfWork:
         self._session: Session | None = None
         self.workflows: WorkflowRepository
         self.outbox: OutboxRepository
+        self.bulletin_jobs: SqlBulletinJobRepository
         self._committed = False
 
     def __enter__(self) -> Self:
@@ -33,6 +35,7 @@ class SqlUnitOfWork:
         self._session = self._sessions()
         self.workflows = SqlWorkflowRepository(self._session)
         self.outbox = SqlOutboxRepository(self._session)
+        self.bulletin_jobs = SqlBulletinJobRepository(self._session)
         return self
 
     def commit(self) -> None:

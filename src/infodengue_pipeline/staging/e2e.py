@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from infodengue_pipeline.analysis.runner import validate_outputs
+from infodengue_pipeline.bulletin.authorization import bulletin_authorized
 from infodengue_pipeline.config import Settings, get_settings
 from infodengue_pipeline.db.engine import session_factory
 from infodengue_pipeline.db.models import (
@@ -257,6 +258,41 @@ def validate_e2e(
     """Validate one explicit object and its exact staging analysis job."""
     settings = settings or get_settings()
     validate_configuration(settings, object_key, timeout)
+    return _validate_e2e(object_key, timeout, settings, expected_sha256=None)
+
+
+def validate_rehearsal_e2e(
+    object_key: str,
+    expected_sha256: str,
+    timeout: float,
+    settings: Settings,
+) -> ValidationResult:
+    """Validate an approved profile through loaded analysis."""
+    if not bulletin_authorized(settings):
+        raise ValueError('production-profile rehearsal is not authorized')
+    if not settings.minio_prefix or not object_key.startswith(
+        settings.minio_prefix
+    ):
+        raise ValueError('object key is outside the authorized MinIO prefix')
+    if len(expected_sha256) != 64 or any(
+        char not in '0123456789abcdef' for char in expected_sha256
+    ):
+        raise ValueError('expected SHA-256 must be lowercase hex')
+    if timeout <= 0:
+        raise ValueError('timeout-seconds must be positive')
+    return _validate_e2e(
+        object_key, timeout, settings, expected_sha256=expected_sha256
+    )
+
+
+def _validate_e2e(
+    object_key: str,
+    timeout: float,
+    settings: Settings,
+    *,
+    expected_sha256: str | None,
+) -> ValidationResult:
+    """Correlate one object, watcher run, workflow, and scientific job."""
     source_url = settings.alerta_source_database_url
     if source_url is None:
         raise ValueError('AlertaDengue source database is not configured')
@@ -275,6 +311,8 @@ def validate_e2e(
         )
     if not ingress.sha256:
         raise RuntimeError('materialized ingress has no SHA-256')
+    if expected_sha256 is not None and ingress.sha256 != expected_sha256:
+        raise RuntimeError('ingress SHA-256 differs from selected input')
     report('ingress materialized')
 
     source = build_source(source_url.get_secret_value())
@@ -348,6 +386,8 @@ def validate_e2e(
     )
     if job.status is AnalysisJobStatus.FAILED:
         raise RuntimeError(f'analysis job failed: {job.last_error}')
+    if job.load != settings.analysis_load:
+        raise RuntimeError('analysis load does not match selected profile')
     report('analysis succeeded', f' attempts={job.attempts}')
     current_workflow = load_current_workflow(
         sessions, workflow_input, settings
@@ -366,7 +406,7 @@ def validate_e2e(
         workflow.epiweek,
         workflow.fingerprint,
         cores=job.cores,
-        load=False,
+        load=job.load,
     )
     print('[II] validating analysis artifacts', flush=True)
     validate_outputs(Path(job.output_dir), request)

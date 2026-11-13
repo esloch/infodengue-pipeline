@@ -3,6 +3,7 @@
 from celery import Celery
 from kombu import Exchange, Queue
 
+from infodengue_pipeline.bulletin.authorization import bulletin_authorized
 from infodengue_pipeline.config import get_settings
 
 
@@ -20,6 +21,7 @@ def create_celery_app() -> Celery:
         'pipeline.events',
         'pipeline.orchestration',
         'pipeline.analysis',
+        'pipeline.bulletin',
     )
     app.conf.update(
         task_queues=tuple(
@@ -63,6 +65,18 @@ def create_celery_app() -> Celery:
                 'queue': 'pipeline.analysis',
                 'routing_key': 'pipeline.analysis',
             },
+            'pipeline.bulletin.dispatch_ready': {
+                'queue': 'pipeline.bulletin',
+                'routing_key': 'pipeline.bulletin',
+            },
+            'pipeline.bulletin.run': {
+                'queue': 'pipeline.bulletin',
+                'routing_key': 'pipeline.bulletin',
+            },
+            'pipeline.bulletin.retry': {
+                'queue': 'pipeline.bulletin',
+                'routing_key': 'pipeline.bulletin',
+            },
         },
         beat_schedule={
             'scan-minio-ingress': {
@@ -81,6 +95,16 @@ def create_celery_app() -> Celery:
                 'task': 'pipeline.analysis.dispatch_ready',
                 'schedule': settings.analysis_poll_seconds,
             },
+            **(
+                {
+                    'dispatch-ready-bulletins': {
+                        'task': 'pipeline.bulletin.dispatch_ready',
+                        'schedule': settings.bulletin_poll_seconds,
+                    }
+                }
+                if bulletin_authorized(settings)
+                else {}
+            ),
         },
         task_serializer='json',
         accept_content=['json'],

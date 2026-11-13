@@ -1,0 +1,1 @@
+"""Manual intramunicipal bulletin workflow."""

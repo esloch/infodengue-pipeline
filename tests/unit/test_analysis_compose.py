@@ -245,7 +245,11 @@ def test_production_service_set_and_privilege_boundary() -> None:
         'worker-orchestration',
         'worker-analysis',
         'worker-beat',
+        'worker-bulletin',
     }
+    assert 'profiles: [bulletin]' in _service_section(
+        'compose-prod.yaml', 'worker-bulletin'
+    )
     assert names.isdisjoint({'validator', 'e2e-runner', 'minio', 'minio-init'})
     for forbidden in (
         'docker.sock',

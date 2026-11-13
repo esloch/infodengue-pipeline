@@ -9,6 +9,20 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pipeline_test
+          POSTGRES_PASSWORD: pipeline_test
+          POSTGRES_DB: pipeline_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pipeline_test -d pipeline_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -18,7 +32,13 @@ jobs:
         run: uv run pre-commit run --all-files
       - name: Quality
         run: uv run makim quality.all
+      - name: Migrate disposable test database
+        env:
+          INFODENGUE_PIPELINE_DATABASE_URL: postgresql+psycopg://pipeline_test:pipeline_test@localhost:5432/pipeline_test
+        run: uv run alembic upgrade head
       - name: Tests and coverage
+        env:
+          INFODENGUE_PIPELINE_TEST_POSTGRES_URL: postgresql+psycopg://pipeline_test:pipeline_test@localhost:5432/pipeline_test
         run: uv run makim tests.all
       - name: Package build
         run: uv build
@@ -39,12 +59,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: AlertaDengue/AlertaDengueAnalise
-          ref: 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+          ref: 78114fbd497e3b447c942590361a860ea5fa241f
           path: analysis-source
       - name: Verify pinned scientific checkout
         run: >-
           test "$(git -C analysis-source rev-parse HEAD)"
-          = 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+          = 78114fbd497e3b447c942590361a860ea5fa241f
       - name: Prepare verified pinned INLA archives
         shell: bash
         run: |
@@ -96,7 +116,7 @@ jobs:
         run: >-
           docker build
           --build-arg ALERTA_ANALYSIS_BASE_IMAGE=alertadengueanalise:ci
-          --build-arg ALERTA_ANALYSIS_REVISION=27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+          --build-arg ALERTA_ANALYSIS_REVISION=78114fbd497e3b447c942590361a860ea5fa241f
           -t infodengue-pipeline-analysis:ci
           -f containers/Dockerfile.analysis .
       - name: Verify scientific runtime in the worker image
@@ -110,4 +130,4 @@ jobs:
         run: >-
           test "$(docker image inspect infodengue-pipeline-analysis:ci
           --format '{{ index .Config.Labels "org.infodengue.alertadengueanalise.revision" }}')"
-          = 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+          = 78114fbd497e3b447c942590361a860ea5fa241f

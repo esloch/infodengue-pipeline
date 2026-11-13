@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     incoming_root: Path = Path('.local/incoming')
     alerta_source_database_url: SecretStr | None = None
     analysis_database_url: SecretStr | None = None
+    bulletin_history_database_url: SecretStr | None = None
     analysis_image: str | None = None  # Executing worker image provenance.
     analysis_output_root: Path = Path('.local/analysis-output')
     analysis_cores: int = Field(default=1, ge=1, le=64)
@@ -53,6 +54,19 @@ class Settings(BaseSettings):
     bridge_poll_seconds: int = Field(default=30, ge=1)
     analysis_poll_seconds: int = Field(default=10, ge=1)
     analysis_dispatch_retry_seconds: int = Field(default=60, ge=1)
+    bulletin_enabled: bool = False
+    bulletin_authorization_file: Path | None = None
+    bulletin_renderer_revision: str = (
+        'fe82d1d5f6caf0a91aca585f0385cf1abea2e953+quarto-1.11.9'
+    )
+    bulletin_reference: Path = Path('/reference/recife_bairros.rds')
+    bulletin_config: Path = Path(
+        '/opt/alertadengueanalise/configs/bulletin/recife.json'
+    )
+    bulletin_output_root: Path = Path('/var/lib/pipeline/bulletins')
+    bulletin_poll_seconds: int = Field(default=60, ge=1)
+    bulletin_dispatch_retry_seconds: int = Field(default=300, ge=1)
+    bulletin_execution_timeout_seconds: int = Field(default=7200, ge=3900)
     outbox_poll_seconds: int = Field(default=15, ge=1)
     br_required_diseases: Annotated[frozenset[Disease], NoDecode] = (
         DEFAULT_BR_REQUIRED_DISEASES

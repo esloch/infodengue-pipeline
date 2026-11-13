@@ -20,9 +20,11 @@ MinIO object
 
 Alembic revision `0002_ingress_analysis_jobs` follows
 `0001_pipeline_foundation` and adds only pipeline-owned ingress and analysis
-job tables. Apply it with the normal development migration command; validate
-both a clean database and an upgrade from `0001_pipeline_foundation` before
-staging rollout.
+job tables. Revision `0003_bulletin_jobs` adds the pipeline-owned Recife
+bulletin job table with a foreign key to `analysis_job` and a unique
+constraint on kind, municipality, scientific job, and renderer revision.
+Apply revisions with the normal development migration command; validate both
+a clean database and an upgrade from the prior head before staging rollout.
 
 ## Pipeline schema migration workflow
 
