@@ -78,7 +78,7 @@ municipal history population to the renderer and does not adjust either value.
 
 The existing staging RDS was adapted from
 `AlertaDengue/intramunicipal/recife/ref_RF.RData`. Keep that source unchanged.
-The [PR30 hash record](../staging-data/pr30-recife-reference.json) identifies
+The PR30 hash record (`staging-data/pr30-recife-reference.json`) identifies
 the original RData (`5a4262f62d750007ea61eaa6425e4c06071fdee5ce57000003898e4a6b45c26e`)
 and adapted RDS (`4c59f5c1f0071d652ed470a5472432e269c2bcceb0a18c584887e12c583b8b7e`).
 The exact prior adaptation steps and scientific approval are not documented.
