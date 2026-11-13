@@ -59,12 +59,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: AlertaDengue/AlertaDengueAnalise
-          ref: 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+          ref: 78114fbd497e3b447c942590361a860ea5fa241f
           path: analysis-source
       - name: Verify pinned scientific checkout
         run: >-
           test "$(git -C analysis-source rev-parse HEAD)"
-          = 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+          = 78114fbd497e3b447c942590361a860ea5fa241f
       - name: Prepare verified pinned INLA archives
         shell: bash
         run: |
@@ -116,7 +116,7 @@ jobs:
         run: >-
           docker build
           --build-arg ALERTA_ANALYSIS_BASE_IMAGE=alertadengueanalise:ci
-          --build-arg ALERTA_ANALYSIS_REVISION=27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+          --build-arg ALERTA_ANALYSIS_REVISION=78114fbd497e3b447c942590361a860ea5fa241f
           -t infodengue-pipeline-analysis:ci
           -f containers/Dockerfile.analysis .
       - name: Verify scientific runtime in the worker image
@@ -130,4 +130,4 @@ jobs:
         run: >-
           test "$(docker image inspect infodengue-pipeline-analysis:ci
           --format '{{ index .Config.Labels "org.infodengue.alertadengueanalise.revision" }}')"
-          = 27a03f26a9bf366597ef135e7da8d2f620ea9a8e
+          = 78114fbd497e3b447c942590361a860ea5fa241f
