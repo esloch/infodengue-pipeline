@@ -71,7 +71,7 @@ services:
       - default
       - staging_integrations
     volumes:
-      - ${STAGING_SINAN_INCOMING_HOST_PATH:?set shared incoming directory}/..:/var/lib/pipeline
+      - ${INFODENGUE_SINAN_INCOMING_HOST_PATH:?set shared incoming directory}/..:/var/lib/pipeline
     healthcheck:
       test:
         - CMD-SHELL
@@ -167,7 +167,7 @@ services:
       - default
       - staging_integrations
     volumes:
-      - ${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
+      - ${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
     healthcheck:
       test:
         - CMD-SHELL
@@ -211,7 +211,7 @@ services:
       - default
       - staging_integrations
     volumes:
-      - ${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
+      - ${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
 
   e2e-runner:
     image: ${PIPELINE_IMAGE:?set pipeline image}
@@ -227,7 +227,7 @@ services:
       - default
       - staging_integrations
     volumes:
-      - ${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
+      - ${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
       - ${STAGING_E2E_FIXTURE_HOST_PATH:-../.envs/.env.staging.e2e.example}:${STAGING_E2E_FIXTURE_CONTAINER_PATH:-/tmp/staging-e2e-fixture.dbf}:ro
 
 volumes:
@@ -237,4 +237,4 @@ volumes:
 networks:
   staging_integrations:
     external: true
-    name: ${STAGING_INTEGRATION_NETWORK:?set existing staging network}
+    name: ${INFODENGUE_INTEGRATION_NETWORK:?set existing staging network}
