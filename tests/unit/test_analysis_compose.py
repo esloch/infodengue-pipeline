@@ -100,7 +100,10 @@ def test_staging_worker_env_and_output_mounts_are_isolated() -> None:
         'INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/analysis-output'
         in core
     )
-    assert 'INFODENGUE_INTEGRATION_NETWORK=infodengue-staging_infodengue' in core
+    assert (
+        'INFODENGUE_INTEGRATION_NETWORK='
+        'infodengue-staging_infodengue' in core
+    )
     assert (
         'external: true' in Path('containers/compose-staging.yaml').read_text()
     )
@@ -402,7 +405,8 @@ def test_production_state_ports_and_integration_network() -> None:
     assert 'PIPELINE_RABBITMQ_HOST_PORT=5675\n' in core
     assert '    external: true' in text
     assert (
-        '${INFODENGUE_INTEGRATION_NETWORK:?set existing integration network}' in text
+        '${INFODENGUE_INTEGRATION_NETWORK:'
+        '?set existing integration network}' in text
     )
     assert 'infodengue-staging_infodengue' not in text
     assert 'pipeline-postgres' in text
