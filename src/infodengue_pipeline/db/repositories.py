@@ -5,7 +5,7 @@ import hashlib
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -77,7 +77,10 @@ class SqlWorkflowRepository:
                 AnalysisJobRow.input_fingerprint
                 == WorkflowRow.queued_fingerprint,
                 AnalysisJobRow.status == AnalysisJobStatus.SUCCEEDED,
-                AnalysisJobRow.load.is_(True),
+                or_(
+                    AnalysisJobRow.load.is_(True),
+                    AnalysisJobRow.published_at.is_not(None),
+                ),
             )
         ).all()
         completed = set(weeks)

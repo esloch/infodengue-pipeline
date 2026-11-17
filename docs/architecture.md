@@ -126,11 +126,14 @@ used as the analysis week. Every available supported input participates in
 the fingerprint. `INFODENGUE_PIPELINE_ANALYSIS_INITIAL_EPIWEEK` is the first
 eligible analysis week and lower bound for the persisted cursor. The candidate
 is the week after the latest contiguous `SUCCEEDED` `analysis_job` with
-`load=true` at or after that week. Without this explicit initialization,
+`load=true` or an explicitly confirmed external publication at or after that
+week. Without this explicit initialization,
 completions are recorded in the outbox but do not create workflows. The next
 week uses epidemiological calendar arithmetic. The cursor advances only across
 contiguous weeks whose successful job fingerprint still matches a succeeded
-workflow. The periodic dispatcher rebuilds the next candidate from retained
+workflow. An external publication preserves the original `load=false` flag
+and records a UTC confirmation timestamp and SHA256 hashes for both SQL files.
+The periodic dispatcher rebuilds the next candidate from retained
 completion events, so one delivery can support consecutive weeks without a
 new ingestion event. For each disease it selects the greatest
 `(completed_at, run_id)` among deliveries whose delivery epiweek reaches the
