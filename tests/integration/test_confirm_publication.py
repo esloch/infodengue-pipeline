@@ -1,7 +1,5 @@
 """Confirm published SQL without re-running scientific analysis."""
 
-from pathlib import Path
-
 import pytest
 
 from infodengue_pipeline.config import Settings
@@ -23,23 +21,15 @@ class SuccessfulRunner:
 
     def run(self, request):
         """Return a finite scientific job success."""
-        return AnalysisJobResult(
-            request.job_id, request.output_dir, True
-        )
+        return AnalysisJobResult(request.job_id, request.output_dir, True)
 
 
 def build_job(sessions, work_factory, completed_event, tmp_path):
     """Persist one BR read-only success and create required artifacts."""
     week = Epiweek.parse(202645)
-    coordinator = CoordinateEpiweek(
-        work_factory, initial_analysis_week=week
-    )
-    coordinator.record(
-        completed_event(Disease.DENGUE, week=202645)
-    )
-    coordinator.record(
-        completed_event(Disease.CHIKUNGUNYA, week=202645)
-    )
+    coordinator = CoordinateEpiweek(work_factory, initial_analysis_week=week)
+    coordinator.record(completed_event(Disease.DENGUE, week=202645))
+    coordinator.record(completed_event(Disease.CHIKUNGUNYA, week=202645))
     service = AnalysisJobService(
         sessions,
         worker_image='analysis:test',
@@ -60,9 +50,7 @@ def build_job(sessions, work_factory, completed_event, tmp_path):
 
     for index in range(27):
         state = f'{index:02d}'
-        path = root / 'alertas' / '202645' / (
-            f'ale-{state}-202645.RData'
-        )
+        path = root / 'alertas' / '202645' / f'ale-{state}-202645.RData'
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'state')
     br = root / 'alertas' / 'BR' / 'ale-BR-202645.RData'
@@ -101,16 +89,10 @@ def test_confirm_advances_cursor_once(
     settings, job_id, _root = build_job(
         sessions, work_factory, completed_event, tmp_path
     )
-    monkeypatch.setattr(
-        publication, 'validate_persisted_week', lambda *_: None
-    )
+    monkeypatch.setattr(publication, 'validate_persisted_week', lambda *_: None)
     week = Epiweek.parse(202645)
-    assert publication.confirm(
-        sessions, settings, job_id, week, object()
-    )
-    assert not publication.confirm(
-        sessions, settings, job_id, week, object()
-    )
+    assert publication.confirm(sessions, settings, job_id, week, object())
+    assert not publication.confirm(sessions, settings, job_id, week, object())
     with sessions() as session:
         job = session.get(AnalysisJobRow, job_id)
         assert job is not None
@@ -135,12 +117,10 @@ def test_missing_map_rejects_confirmation(
     monkeypatch.setattr(
         publication, 'validate_persisted_week', lambda *_: None
     )
-    (root / 'incidence_maps' / 'country'
-     / 'incidence_Nacional_dengue.png').unlink()
+    (root / 'incidence_maps' / 'country' / 'incidence_Nacional_dengue.png').unlink()
     with pytest.raises(ValueError, match='missing national map'):
         publication.confirm(
-            sessions, settings, job_id, Epiweek.parse(202645),
-            object()
+            sessions, settings, job_id, Epiweek.parse(202645), object()
         )
     with sessions() as session:
         job = session.get(AnalysisJobRow, job_id)
@@ -159,8 +139,7 @@ def test_publication_requires_correct_week(
     )
     with pytest.raises(ValueError, match='requested epiweek'):
         publication.confirm(
-            sessions, settings, job_id, Epiweek.parse(202644),
-            object()
+            sessions, settings, job_id, Epiweek.parse(202644), object()
         )
 
 
@@ -196,8 +175,7 @@ def test_published_sql_must_not_change(
         publication, 'validate_persisted_week', lambda *_: None
     )
     assert publication.confirm(
-        sessions, settings, job_id, Epiweek.parse(202645),
-        object()
+        sessions, settings, job_id, Epiweek.parse(202645), object()
     )
     (root / 'sql' / 'output_dengue.sql').write_bytes(b'drift')
     with pytest.raises(ValueError, match='hashes changed'):
