@@ -41,9 +41,9 @@ credentials separate.
 On Mosqserver, keep host persistence under `/Storage/infodengue_data`:
 
 ```text
-PROD_SINAN_INCOMING_HOST_PATH=/Storage/infodengue_data/sinan/incoming
-PROD_ANALYSIS_OUTPUT_HOST_PATH=/Storage/infodengue_data/pipeline/analysis-output
-PROD_BULLETIN_OUTPUT_HOST_PATH=/Storage/infodengue_data/pipeline/bulletins
+INFODENGUE_SINAN_INCOMING_HOST_PATH=/Storage/infodengue_data/sinan/incoming
+INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH=/Storage/infodengue_data/pipeline/analysis-output
+INFODENGUE_BULLETIN_OUTPUT_HOST_PATH=/Storage/infodengue_data/pipeline/bulletins
 ```
 
 These are **host bind mount paths**, configured in the private
@@ -159,9 +159,9 @@ Use these non-secret values in the private rehearsal configuration, alongside
 staging-only credentials and staging-only database and MinIO URLs:
 
 ```text
-PROD_INTEGRATION_NETWORK=infodengue-staging_infodengue
-PROD_SINAN_INCOMING_HOST_PATH=/opt/data/staging/sinan/incoming
-PROD_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/prod-analysis-output
+INFODENGUE_INTEGRATION_NETWORK=infodengue-staging_infodengue
+INFODENGUE_SINAN_INCOMING_HOST_PATH=/opt/data/staging/sinan/incoming
+INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/prod-analysis-output
 PIPELINE_POSTGRES_HOST_PORT=5436
 PIPELINE_RABBITMQ_HOST_PORT=5675
 INFODENGUE_PIPELINE_ENVIRONMENT=prod
