@@ -57,10 +57,10 @@ def postgres_sessions() -> Iterator[sessionmaker[Session]]:
             current = connection.scalar(
                 text('SELECT version_num FROM alembic_version')
             )
-            if current != '0004_bulletin_dispatch':
+            if current != '0005_analysis_publication':
                 pytest.fail(
                     'disposable PostgreSQL database must be migrated to '
-                    '0004_bulletin_dispatch'
+                    '0005_analysis_publication'
                 )
         with Session(engine) as session:
             existing_workflows = set(
