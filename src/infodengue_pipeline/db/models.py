@@ -284,6 +284,11 @@ class AnalysisJobRow(Base):
     )
     exit_code: Mapped[int | None] = mapped_column(Integer)
     last_error: Mapped[str | None] = mapped_column(String(512))
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    published_dengue_sha256: Mapped[str | None] = mapped_column(String(64))
+    published_chik_sha256: Mapped[str | None] = mapped_column(String(64))
 
 
 class BulletinJobRow(Base):
