@@ -712,7 +712,11 @@ def test_retry_is_noop_for_non_failed_job(
 
 @pytest.mark.parametrize('max_week', [None, 202638, 202641])
 def test_production_dispatch_requires_authorized_week(
-    sessions, work_factory, completed_event, tmp_path: Path, monkeypatch,
+    sessions,
+    work_factory,
+    completed_event,
+    tmp_path: Path,
+    monkeypatch,
     max_week: int | None,
 ) -> None:
     """Production never dispatches beyond the approved week."""
@@ -730,7 +734,8 @@ def test_production_dispatch_requires_authorized_week(
     monkeypatch.setattr(tasks, 'session_factory', lambda: sessions)
     published: list[UUID] = []
     monkeypatch.setattr(
-        tasks.celery_app, 'send_task',
+        tasks.celery_app,
+        'send_task',
         lambda _name, args, **_kwargs: published.append(UUID(args[0])),
     )
     allowed = max_week is not None and max_week >= 202639
