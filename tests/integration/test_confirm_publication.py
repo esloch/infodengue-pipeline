@@ -268,7 +268,9 @@ def test_publication_cli_records_attested_confirmation(
             disposed.append(True)
 
     monkeypatch.setattr(publication, 'get_settings', lambda: settings)
-    monkeypatch.setattr(publication, 'create_engine', lambda *a, **k: FakeEngine())
+    monkeypatch.setattr(
+        publication, 'create_engine', lambda *a, **k: FakeEngine()
+    )
     monkeypatch.setattr(publication, 'session_factory', lambda: object())
     monkeypatch.setattr(publication, 'confirm', lambda *a: True)
 
