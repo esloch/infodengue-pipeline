@@ -1,5 +1,8 @@
 """Confirm published SQL without re-running scientific analysis."""
 
+from uuid import uuid4
+
+import click
 import pytest
 
 from infodengue_pipeline.config import Settings
@@ -244,3 +247,42 @@ def test_artifacts_must_be_inside_configured_output_root(tmp_path) -> None:
             tmp_path,
             Epiweek.parse(202645),
         )
+
+
+def test_publication_cli_records_attested_confirmation(
+    monkeypatch, capsys
+) -> None:
+    """Use the configured databases but never rerun the scientific job."""
+    settings = Settings(
+        _env_file=None,
+        environment='prod',
+        analysis_database_url='postgresql+psycopg://unused',
+    )
+    disposed = []
+
+    class FakeEngine:
+        """Track cleanup without opening a PostgreSQL connection."""
+
+        def dispose(self) -> None:
+            """Record engine cleanup."""
+            disposed.append(True)
+
+    monkeypatch.setattr(publication, 'get_settings', lambda: settings)
+    monkeypatch.setattr(publication, 'create_engine', lambda *a, **k: FakeEngine())
+    monkeypatch.setattr(publication, 'session_factory', lambda: object())
+    monkeypatch.setattr(publication, 'confirm', lambda *a: True)
+
+    publication.main.callback(uuid4(), 202645, True)
+    assert 'Publication confirmed' in capsys.readouterr().out
+    assert disposed == [True]
+
+    monkeypatch.setattr(publication, 'confirm', lambda *a: False)
+    publication.main.callback(uuid4(), 202645, True)
+    assert 'Publication already confirmed' in capsys.readouterr().out
+    assert disposed == [True, True]
+
+
+def test_publication_cli_rejects_unattested_invocations() -> None:
+    """Never acknowledge publication without explicit operator evidence."""
+    with pytest.raises(click.ClickException, match='confirmation is required'):
+        publication.main.callback(uuid4(), 202645, False)
