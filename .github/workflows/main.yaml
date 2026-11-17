@@ -30,9 +30,6 @@ jobs:
         run: uv sync --extra dev --locked
       - name: Pre-commit
         run: uv run pre-commit run --all-files
-      - name: Show formatter changes
-        if: failure()
-        run: git diff -- tests/integration/test_confirm_publication.py
       - name: Quality
         run: uv run makim quality.all
       - name: Migrate disposable test database
