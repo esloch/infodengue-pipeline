@@ -138,7 +138,9 @@ def confirm(
                 job.published_dengue_sha256 != hashes['dengue']
                 or job.published_chik_sha256 != hashes['chikungunya']
             ):
-                raise ValueError('publication hashes changed since confirmation')
+                raise ValueError(
+                    'publication hashes changed since confirmation'
+                )
             return False
         job.published_at = datetime.now(timezone.utc)
         job.published_dengue_sha256 = hashes['dengue']
