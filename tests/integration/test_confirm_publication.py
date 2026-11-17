@@ -2,6 +2,8 @@
 
 import pytest
 
+from sqlalchemy import create_engine, text
+
 from infodengue_pipeline.config import Settings
 from infodengue_pipeline.db.jobs import AnalysisJobService
 from infodengue_pipeline.db.models import AnalysisJobRow
@@ -189,4 +191,63 @@ def test_published_sql_must_not_change(
     with pytest.raises(ValueError, match='hashes changed'):
         publication.confirm(
             sessions, settings, job_id, Epiweek.parse(202645), object()
+        )
+
+
+def test_history_validation_checks_both_diseases() -> None:
+    """Require the full national municipality set in both histories."""
+    engine = create_engine('sqlite+pysqlite:///:memory:')
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text('ATTACH DATABASE :name AS "Municipio"'),
+                {'name': ':memory:'},
+            )
+            for table in ('Historico_alerta', 'Historico_alerta_chik'):
+                connection.execute(
+                    text(
+                        f'CREATE TABLE "Municipio"."{table}" '
+                        '("SE" integer, municipio_geocodigo integer)'
+                    )
+                )
+                connection.execute(
+                    text(
+                        f'INSERT INTO "Municipio"."{table}" '
+                        '("SE", municipio_geocodigo) '
+                        'VALUES (:week, :municipality)'
+                    ),
+                    [
+                        {'week': 202645, 'municipality': code}
+                        for code in range(5570)
+                    ],
+                )
+
+        publication.validate_persisted_week(
+            engine, Epiweek.parse(202645)
+        )
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    'DELETE FROM "Municipio"."Historico_alerta_chik" '
+                    'WHERE municipio_geocodigo = 0'
+                )
+            )
+        with pytest.raises(ValueError, match='Historico_alerta_chik'):
+            publication.validate_persisted_week(
+                engine, Epiweek.parse(202645)
+            )
+    finally:
+        engine.dispose()
+
+
+def test_artifacts_must_be_inside_configured_output_root(
+    tmp_path,
+) -> None:
+    """Reject a missing or unrelated job output directory."""
+    with pytest.raises(FileNotFoundError):
+        publication.artifact_hashes(
+            tmp_path / 'missing',
+            tmp_path,
+            Epiweek.parse(202645),
         )
