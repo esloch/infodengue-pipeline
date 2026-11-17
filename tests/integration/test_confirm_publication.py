@@ -1,11 +1,8 @@
 """Confirm published SQL without re-running scientific analysis."""
 
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
-
-from sqlalchemy import select
 
 from infodengue_pipeline.config import Settings
 from infodengue_pipeline.db.jobs import AnalysisJobService
