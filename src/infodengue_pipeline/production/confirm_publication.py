@@ -71,9 +71,7 @@ def validate_persisted_week(engine: Engine, week: Epiweek) -> None:
                 'count(DISTINCT municipio_geocodigo) AS municipalities '
                 f'FROM "Municipio"."{table}" WHERE "SE" = :week'
             )
-            result = connection.execute(
-                sql, {'week': int(week)}
-            ).one()
+            result = connection.execute(sql, {'week': int(week)}).one()
             if tuple(result) != (5570, 5570):
                 raise ValueError(
                     f'incomplete persisted {table} for week {week}: '
@@ -158,9 +156,7 @@ def confirm(
     required=True,
     help='Attest successful map publication and prod runtime refresh.',
 )
-def main(
-    job_id: UUID, week: int, confirm_runtime_refreshed: bool
-) -> None:
+def main(job_id: UUID, week: int, confirm_runtime_refreshed: bool) -> None:
     """Acknowledge an independently completed publication."""
     if not confirm_runtime_refreshed:
         raise click.ClickException('runtime confirmation is required')
@@ -172,9 +168,7 @@ def main(
     history_engine = create_engine(
         settings.analysis_database_url.get_secret_value(),
         pool_pre_ping=True,
-        connect_args={
-            'options': '-c default_transaction_read_only=on'
-        },
+        connect_args={'options': '-c default_transaction_read_only=on'},
         hide_parameters=True,
     )
     try:
@@ -186,7 +180,8 @@ def main(
             history_engine,
         )
         click.echo(
-            'Publication confirmed' if changed
+            'Publication confirmed'
+            if changed
             else 'Publication already confirmed'
         )
     except (ValueError, OSError) as exc:
