@@ -64,14 +64,23 @@ def artifact_hashes(
 
 def validate_persisted_week(engine: Engine, week: Epiweek) -> None:
     """Confirm both complete national datasets exist in scientific DB."""
+    tables = {
+        'Historico_alerta': text(
+            'SELECT count(*) AS rows, '
+            'count(DISTINCT municipio_geocodigo) AS municipalities '
+            'FROM "Municipio"."Historico_alerta" WHERE "SE" = :week'
+        ),
+        'Historico_alerta_chik': text(
+            'SELECT count(*) AS rows, '
+            'count(DISTINCT municipio_geocodigo) AS municipalities '
+            'FROM "Municipio"."Historico_alerta_chik" WHERE "SE" = :week'
+        ),
+    }
     with engine.connect() as connection:
-        for table in ('Historico_alerta', 'Historico_alerta_chik'):
-            sql = text(
-                'SELECT count(*) AS rows, '
-                'count(DISTINCT municipio_geocodigo) AS municipalities '
-                f'FROM "Municipio"."{table}" WHERE "SE" = :week'
-            )
-            result = connection.execute(sql, {'week': int(week)}).one()
+        for table, statement in tables.items():
+            result = connection.execute(
+                statement, {'week': int(week)}
+            ).one()
             if tuple(result) != (5570, 5570):
                 raise ValueError(
                     f'incomplete persisted {table} for week {week}: '
