@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     analysis_cores: int = Field(default=1, ge=1, le=64)
     analysis_load: bool = False
     analysis_initial_epiweek: int | None = None
+    analysis_max_epiweek: int | None = None
     analysis_timeout_seconds: int = Field(default=21600, ge=1)
     analysis_load_lock_timeout_seconds: int = Field(default=900, ge=1)
     minio_poll_seconds: int = Field(default=60, ge=1)
@@ -112,7 +113,7 @@ class Settings(BaseSettings):
             raise ValueError('minio_bucket must be a simple bucket name')
         return value
 
-    @field_validator('analysis_initial_epiweek')
+    @field_validator('analysis_initial_epiweek', 'analysis_max_epiweek')
     @classmethod
     def validate_analysis_initial_epiweek(
         cls, value: int | None
