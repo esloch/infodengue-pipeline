@@ -710,7 +710,7 @@ def test_retry_is_noop_for_non_failed_job(
         assert job.cores == 1
 
 
-@pytest.mark.parametrize('max_week', [None, 202641])
+@pytest.mark.parametrize('max_week', [None, 202638, 202641])
 def test_production_dispatch_requires_authorized_week(
     sessions, work_factory, completed_event, tmp_path: Path, monkeypatch,
     max_week: int | None,
@@ -733,11 +733,12 @@ def test_production_dispatch_requires_authorized_week(
         tasks.celery_app, 'send_task',
         lambda _name, args, **_kwargs: published.append(UUID(args[0])),
     )
-    assert tasks.dispatch_ready() == (0 if max_week is None else 1)
-    assert len(published) == (0 if max_week is None else 1)
+    allowed = max_week is not None and max_week >= 202639
+    assert tasks.dispatch_ready() == int(allowed)
+    assert len(published) == int(allowed)
     with sessions() as session:
         jobs = session.scalars(select(AnalysisJobRow)).all()
-        assert len(jobs) == (0 if max_week is None else 1)
+        assert len(jobs) == int(allowed)
 
 
 def test_production_rejects_unauthorized_queued_job(
