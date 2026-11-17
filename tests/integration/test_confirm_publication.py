@@ -119,7 +119,10 @@ def test_missing_map_rejects_confirmation(
     monkeypatch.setattr(
         publication, 'validate_persisted_week', lambda *_: None
     )
-    missing = root / 'incidence_maps' / 'country' / 'incidence_Nacional_dengue.png'
+    missing = (
+        root / 'incidence_maps' / 'country'
+        / 'incidence_Nacional_dengue.png'
+    )
     missing.unlink()
     with pytest.raises(ValueError, match='missing national map'):
         publication.confirm(
