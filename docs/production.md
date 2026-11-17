@@ -36,6 +36,37 @@ analysis database role. The analysis role stays read-only while `load=false`.
 Keep the pipeline PostgreSQL, RabbitMQ, source DB, analysis DB, and MinIO
 credentials separate.
 
+## Production host storage
+
+On Mosqserver, keep host persistence under `/Storage/infodengue_data`:
+
+```text
+PROD_SINAN_INCOMING_HOST_PATH=/Storage/infodengue_data/sinan/incoming
+PROD_ANALYSIS_OUTPUT_HOST_PATH=/Storage/infodengue_data/pipeline/analysis-output
+PROD_BULLETIN_OUTPUT_HOST_PATH=/Storage/infodengue_data/pipeline/bulletins
+```
+
+These are **host bind mount paths**, configured in the private
+`.envs/.env.prod` file used for Compose interpolation. Keep the worker runtime
+settings `INFODENGUE_PIPELINE_INCOMING_ROOT=/var/lib/pipeline/incoming`
+and `INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT=/var/lib/pipeline/analysis-output`
+unchanged: they refer to the directories **inside containers**. The
+`worker-ingestion` bind mounts the parent of the host incoming path at
+`/var/lib/pipeline`; analysis and orchestration workers share the analysis
+output bind mount, and the optional bulletin worker mounts it read-only.
+
+When migrating an existing deployment, do not change the bind mount before
+copying and verifying all existing job directories, including incomplete runs.
+Ensure permissions match the analysis worker's runtime UID/GID. Check the
+rendered Compose configuration with `docker compose --env-file
+.envs/.env.prod -f containers/compose-prod.yaml config --quiet`. Recreate
+only explicitly authorized services during a maintenance window; changing a
+host `.env` file does not change an existing container's mounts. Retain the
+old `/opt/data/prod/pipeline-analysis-output` until the new mounts and job
+artifacts have been verified. Do not start paused analysis, orchestration, or
+Beat workers as part of a storage migration. Keep the production analysis
+maximum epiweek authorization gate in effect.
+
 ## Production topology
 
 The project `infodengue-pipeline-prod` has PostgreSQL, RabbitMQ, a finite
