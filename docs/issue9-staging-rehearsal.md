@@ -120,9 +120,9 @@ ${EDITOR:-vi} .env.prod .env.prod.analysis
 Set the following in `.env.prod`: `PIPELINE_WORKER_ENV_FILE=../.env.prod`,
 `PIPELINE_ANALYSIS_ENV_FILE=../.env.prod.analysis`, `PIPELINE_IMAGE=$CORE_REF`,
 `PIPELINE_ANALYSIS_IMAGE=$ANALYSIS_REF`,
-`PROD_INTEGRATION_NETWORK=infodengue-staging_infodengue`,
-`PROD_SINAN_INCOMING_HOST_PATH=/opt/data/staging/sinan/incoming`,
-`PROD_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/prod-analysis-output`,
+`INFODENGUE_INTEGRATION_NETWORK=infodengue-staging_infodengue`,
+`INFODENGUE_SINAN_INCOMING_HOST_PATH=/opt/data/staging/sinan/incoming`,
+`INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/prod-analysis-output`,
 `PIPELINE_POSTGRES_HOST_PORT=5436`, and `PIPELINE_RABBITMQ_HOST_PORT=5675`.
 Use distinct new `PIPELINE_POSTGRES_PASSWORD` and
 `PIPELINE_RABBITMQ_PASSWORD`. Their matching URLs must use
