@@ -145,6 +145,8 @@ services:
     networks:
       - default
       - prod_integrations
+    volumes:
+      - ${PROD_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
     healthcheck:
       test:
         - CMD-SHELL
