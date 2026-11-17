@@ -37,6 +37,7 @@ COPY --from=wheel-builder /dist/ /tmp/pipeline-dist/
 RUN python -m pip install --no-cache-dir \
       -r /tmp/pipeline-dist/requirements.txt \
     && python -m pip install --no-cache-dir --no-deps \
+      --force-reinstall \
       /tmp/pipeline-dist/infodengue_pipeline-*.whl \
     && python -c 'import infodengue_pipeline' \
     && rm -r /tmp/pipeline-dist
