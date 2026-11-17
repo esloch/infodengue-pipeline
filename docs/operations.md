@@ -50,6 +50,48 @@ finished the run. Outbox pending events have not been confirmed published.
 Workflow and job states live in PostgreSQL and remain authoritative when
 broker messages are missing.
 
+### Confirm manually published scientific outputs
+
+Use this only after an independently completed `load=false` job has been
+published through the approved production process: the existing
+`pipeline.load-alertas` transaction, both incidence map tasks, map asset
+publication, and successful `deployment.refresh-runtime --env prod --week
+YYYYWW`. This command does **not** apply SQL, generate maps, publish assets,
+or refresh the InfoDengue runtime.
+
+After deploying the migration and updated pipeline image, run this on the
+`worker-analysis` container with the existing pipeline database URL and the
+read-only scientific database URL. For SE 202645:
+
+```bash
+docker compose --env-file .envs/.env.prod \\
+  -f containers/compose-prod.yaml exec -T worker-analysis \\
+  python -m infodengue_pipeline.production.confirm_publication \\
+  --job-id 8f0e5d39-886b-4869-b634-c653e0d04f37 \\
+  --week 202645 --confirm-runtime-refreshed
+```
+
+The command verifies that the job succeeded in `load=false` mode, is
+associated with the current workflow input fingerprint and correct
+epidemiological week, and belongs to the next contiguous cursor week.
+It requires 27 state RData files, national RData, two nonempty SQL files,
+two national PNG maps, and 54 state PNG maps in the job's own output
+directory. It also checks that the read-only scientific database contains
+exactly 5,570 distinct municipalities and records for each disease in the
+requested week. It stores SHA256 hashes of both SQL files and a UTC
+publication timestamp on the original `pipeline.analysis_job` record.
+
+A repeated command with unchanged inputs is idempotent. Changed SQL files
+cause rejection. The analysis job retains its original `load=false` value;
+the contiguous cursor accepts successful jobs with either `load=true` or
+confirmed external publication. Never edit the job row directly or use this
+command to declare a failed runtime refresh successful.
+
+This confirms the independently performed SE 202645 publication only.
+For future weeks, automated `load=true` operation still requires an
+authorized scientific write role, persistent map shape inputs, and tested
+production deployment settings. Do not enable it implicitly.
+
 ### Explicit analysis retry
 
 Find a failed candidate with `uv run makim prod.status`, then inspect its
