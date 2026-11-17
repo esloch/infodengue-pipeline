@@ -63,8 +63,11 @@ def build_job(sessions, work_factory, completed_event, tmp_path):
     (sql / 'output_chik.sql').write_bytes(b'chik')
 
     for disease in ('dengue', 'chikungunya'):
-        path = root / 'incidence_maps' / 'country' / (
-            f'incidence_Nacional_{disease}.png'
+        path = (
+            root
+            / 'incidence_maps'
+            / 'country'
+            / (f'incidence_Nacional_{disease}.png')
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'country')
@@ -105,7 +108,8 @@ def test_confirm_advances_cursor_once(
         assert (
             SqlWorkflowRepository(session).last_persisted_analysis_week(
                 Coverage.BR, week
-            ) == week
+            )
+            == week
         )
 
 
@@ -120,8 +124,7 @@ def test_missing_map_rejects_confirmation(
         publication, 'validate_persisted_week', lambda *_: None
     )
     missing = (
-        root / 'incidence_maps' / 'country'
-        / 'incidence_Nacional_dengue.png'
+        root / 'incidence_maps' / 'country' / 'incidence_Nacional_dengue.png'
     )
     missing.unlink()
     with pytest.raises(ValueError, match='missing national map'):
@@ -165,8 +168,7 @@ def test_confirm_requires_current_input_fingerprint(
         job.input_fingerprint = 'stale'
     with pytest.raises(ValueError, match='fingerprint'):
         publication.confirm(
-            sessions, settings, job_id, Epiweek.parse(202645),
-            object()
+            sessions, settings, job_id, Epiweek.parse(202645), object()
         )
 
 
@@ -186,6 +188,5 @@ def test_published_sql_must_not_change(
     (root / 'sql' / 'output_dengue.sql').write_bytes(b'drift')
     with pytest.raises(ValueError, match='hashes changed'):
         publication.confirm(
-            sessions, settings, job_id, Epiweek.parse(202645),
-            object()
+            sessions, settings, job_id, Epiweek.parse(202645), object()
         )
