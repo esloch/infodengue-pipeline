@@ -222,9 +222,7 @@ def test_history_validation_checks_both_diseases() -> None:
                     ],
                 )
 
-        publication.validate_persisted_week(
-            engine, Epiweek.parse(202645)
-        )
+        publication.validate_persisted_week(engine, Epiweek.parse(202645))
 
         with engine.begin() as connection:
             connection.execute(
@@ -241,9 +239,7 @@ def test_history_validation_checks_both_diseases() -> None:
         engine.dispose()
 
 
-def test_artifacts_must_be_inside_configured_output_root(
-    tmp_path,
-) -> None:
+def test_artifacts_must_be_inside_configured_output_root(tmp_path) -> None:
     """Reject a missing or unrelated job output directory."""
     with pytest.raises(FileNotFoundError):
         publication.artifact_hashes(
