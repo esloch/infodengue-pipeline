@@ -81,8 +81,7 @@ def test_staging_worker_env_and_output_mounts_are_isolated() -> None:
     assert fixed_root in analysis
     assert fixed_root in validator
     assert mount not in orchestration
-    assert '${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:' in orchestration
-    assert ':/var/lib/pipeline/analysis-output' in orchestration
+    assert '    volumes:' not in orchestration
     assert (
         'INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT='
         '/var/lib/pipeline/analysis-output'
@@ -325,7 +324,8 @@ def test_production_worker_env_mounts_and_networks() -> None:
     assert '/..:/var/lib/pipeline' in ingestion
     assert '${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:' in analysis
     assert ':/var/lib/pipeline/analysis-output' in analysis
-    assert '    volumes:' not in orchestration
+    assert '${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:' in orchestration
+    assert ':/var/lib/pipeline/analysis-output' in orchestration
     assert '    networks:' not in beat.split('\nvolumes:', 1)[0]
     for name in (
         'worker-ingestion',
