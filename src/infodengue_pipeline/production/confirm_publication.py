@@ -78,9 +78,7 @@ def validate_persisted_week(engine: Engine, week: Epiweek) -> None:
     }
     with engine.connect() as connection:
         for table, statement in tables.items():
-            result = connection.execute(
-                statement, {'week': int(week)}
-            ).one()
+            result = connection.execute(statement, {'week': int(week)}).one()
             if tuple(result) != (5570, 5570):
                 raise ValueError(
                     f'incomplete persisted {table} for week {week}: '
