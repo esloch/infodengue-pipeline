@@ -89,7 +89,9 @@ def test_confirm_advances_cursor_once(
     settings, job_id, _root = build_job(
         sessions, work_factory, completed_event, tmp_path
     )
-    monkeypatch.setattr(publication, 'validate_persisted_week', lambda *_: None)
+    monkeypatch.setattr(
+        publication, 'validate_persisted_week', lambda *_: None
+    )
     week = Epiweek.parse(202645)
     assert publication.confirm(sessions, settings, job_id, week, object())
     assert not publication.confirm(sessions, settings, job_id, week, object())
@@ -117,7 +119,8 @@ def test_missing_map_rejects_confirmation(
     monkeypatch.setattr(
         publication, 'validate_persisted_week', lambda *_: None
     )
-    (root / 'incidence_maps' / 'country' / 'incidence_Nacional_dengue.png').unlink()
+    missing = root / 'incidence_maps' / 'country' / 'incidence_Nacional_dengue.png'
+    missing.unlink()
     with pytest.raises(ValueError, match='missing national map'):
         publication.confirm(
             sessions, settings, job_id, Epiweek.parse(202645), object()
