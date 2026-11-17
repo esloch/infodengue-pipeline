@@ -10,7 +10,7 @@ from uuid import UUID
 
 import click
 
-from sqlalchemy import Engine, create_engine, func, select, text
+from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from infodengue_pipeline.config import Settings, get_settings
@@ -64,14 +64,13 @@ def artifact_hashes(
 
 def validate_persisted_week(engine: Engine, week: Epiweek) -> None:
     """Confirm both complete national datasets exist in scientific DB."""
-    statement = text(
-        'SELECT count(*) AS rows, '
-        'count(DISTINCT municipio_geocodigo) AS municipalities '
-        'FROM "Municipio"."{table}" WHERE "SE" = :week'
-    )
     with engine.connect() as connection:
         for table in ('Historico_alerta', 'Historico_alerta_chik'):
-            sql = text(str(statement).replace('{table}', table))
+            sql = text(
+                'SELECT count(*) AS rows, '
+                'count(DISTINCT municipio_geocodigo) AS municipalities '
+                f'FROM "Municipio"."{table}" WHERE "SE" = :week'
+            )
             result = connection.execute(
                 sql, {'week': int(week)}
             ).one()
