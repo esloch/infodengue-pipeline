@@ -111,8 +111,7 @@ def confirm(
         if (
             snapshot is None
             or not snapshot.readiness.ready
-            or snapshot.readiness.input_fingerprint
-            != job.input_fingerprint
+            or snapshot.readiness.input_fingerprint != job.input_fingerprint
             or workflow.queued_fingerprint != job.input_fingerprint
         ):
             raise ValueError('job input fingerprint is no longer current')
