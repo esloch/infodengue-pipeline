@@ -2,8 +2,6 @@
 
 import pytest
 
-from sqlalchemy import create_engine, text
-
 from infodengue_pipeline.config import Settings
 from infodengue_pipeline.db.jobs import AnalysisJobService
 from infodengue_pipeline.db.models import AnalysisJobRow
@@ -16,6 +14,7 @@ from infodengue_pipeline.models import (
 )
 from infodengue_pipeline.production import confirm_publication as publication
 from infodengue_pipeline.services import CoordinateEpiweek
+from sqlalchemy import create_engine, text
 
 
 class SuccessfulRunner:
@@ -232,9 +231,7 @@ def test_history_validation_checks_both_diseases() -> None:
                 )
             )
         with pytest.raises(ValueError, match='Historico_alerta_chik'):
-            publication.validate_persisted_week(
-                engine, Epiweek.parse(202645)
-            )
+            publication.validate_persisted_week(engine, Epiweek.parse(202645))
     finally:
         engine.dispose()
 
