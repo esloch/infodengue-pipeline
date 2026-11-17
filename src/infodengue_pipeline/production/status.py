@@ -201,7 +201,8 @@ def report(session: Session, limit: int = 20) -> str:
                 f'status={job_row.status.value} '
                 f'attempts={job_row.attempts} '
                 f'created_at={_timestamp(job_row.created_at)} '
-                f'finished_at={_timestamp(job_row.finished_at)}'
+                f'finished_at={_timestamp(job_row.finished_at)} '
+                f'published_at={_timestamp(job_row.published_at)}'
             )
         if not job_rows:
             lines.append('  (none)')
