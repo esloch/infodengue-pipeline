@@ -41,6 +41,27 @@ from infodengue_pipeline.storage.minio import build_object_store
 from sqlalchemy import and_, or_, select, update
 
 
+def _analysis_week_allowed(settings: Settings, week: int) -> bool:
+    """Require explicit authorization for production scientific weeks."""
+    return settings.environment != 'prod' or (
+        settings.analysis_max_epiweek is not None
+        and week <= settings.analysis_max_epiweek
+    )
+
+
+def _job_week_allowed(settings: Settings, job_id: UUID) -> bool:
+    """Check authorization again when executing a broker-delivered job."""
+    if settings.environment != 'prod':
+        return True
+    with session_factory()() as session:
+        week = session.scalar(
+            select(WorkflowRow.epiweek)
+            .join(AnalysisJobRow)
+            .where(AnalysisJobRow.job_id == job_id)
+        )
+    return week is not None and _analysis_week_allowed(settings, week)
+
+
 def _analysis_jobs(settings: Settings | None = None) -> AnalysisJobService:
     """Build the persisted finite-job service from validated settings."""
     config = settings or get_settings()
@@ -196,11 +217,15 @@ def dispatch_ready(limit: int = 100) -> int:
     """Create logical jobs for ready workflows and dispatch only job IDs."""
     settings = get_settings()
     configure_logging(settings.log_level)
-    if not settings.analysis_image:
+    if not settings.analysis_image or (
+        settings.environment == 'prod'
+        and settings.analysis_max_epiweek is None
+    ):
         return 0
     candidates = {
         snapshot.readiness.coverage: snapshot.readiness.epiweek
         for snapshot in _coordinator(settings).reconcile_all()
+        if _analysis_week_allowed(settings, int(snapshot.readiness.epiweek))
     }
     if not candidates:
         return 0
@@ -279,6 +304,8 @@ def run_analysis(job_id: str) -> bool:
     """Atomically claim and execute one persisted analysis job."""
     settings = get_settings()
     configure_logging(settings.log_level)
+    if not _job_week_allowed(settings, UUID(job_id)):
+        return False
     return _analysis_jobs(settings).execute(
         UUID(job_id), InContainerAnalysisRunner(settings)
     )
@@ -289,6 +316,8 @@ def retry_analysis(job_id: str) -> bool:
     """Explicitly requeue a FAILED job; no automatic scientific retry."""
     settings = get_settings()
     configure_logging(settings.log_level)
+    if not _job_week_allowed(settings, UUID(job_id)):
+        return False
     if not _analysis_jobs(settings).retry(UUID(job_id)):
         return False
     celery_app.send_task(

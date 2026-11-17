@@ -114,9 +114,9 @@ configuration values:
 
 - `PIPELINE_WORKER_ENV_FILE=../.env.prod` and
   `PIPELINE_ANALYSIS_ENV_FILE=../.env.prod.analysis`.
-- `PROD_INTEGRATION_NETWORK=infodengue-staging_infodengue`.
-- `PROD_SINAN_INCOMING_HOST_PATH=/opt/data/staging/sinan/incoming`.
-- `PROD_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/prod-analysis-output`.
+- `INFODENGUE_INTEGRATION_NETWORK=infodengue-staging_infodengue`.
+- `INFODENGUE_SINAN_INCOMING_HOST_PATH=/opt/data/staging/sinan/incoming`.
+- `INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/prod-analysis-output`.
 - `PIPELINE_POSTGRES_HOST_PORT=5436` and
   `PIPELINE_RABBITMQ_HOST_PORT=5675` (Compose binds both to loopback).
 - `PIPELINE_IMAGE` and `PIPELINE_ANALYSIS_IMAGE` are the reviewed immutable

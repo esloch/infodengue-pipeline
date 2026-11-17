@@ -708,3 +708,71 @@ def test_retry_is_noop_for_non_failed_job(
         assert job is not None
         assert job.status is AnalysisJobStatus.QUEUED
         assert job.cores == 1
+
+
+@pytest.mark.parametrize('max_week', [None, 202638, 202641])
+def test_production_dispatch_requires_authorized_week(
+    sessions,
+    work_factory,
+    completed_event,
+    tmp_path: Path,
+    monkeypatch,
+    max_week: int | None,
+) -> None:
+    """Production never dispatches beyond the approved week."""
+    ready_workflow(work_factory, completed_event)
+    settings = Settings(
+        _env_file=None,
+        environment='prod',
+        analysis_image='analysis:test',
+        analysis_initial_epiweek=202639,
+        analysis_max_epiweek=max_week,
+        analysis_output_root=tmp_path,
+    )
+    monkeypatch.setattr(tasks, 'get_settings', lambda: settings)
+    monkeypatch.setattr(tasks, 'unit_of_work', work_factory)
+    monkeypatch.setattr(tasks, 'session_factory', lambda: sessions)
+    published: list[UUID] = []
+    monkeypatch.setattr(
+        tasks.celery_app,
+        'send_task',
+        lambda _name, args, **_kwargs: published.append(UUID(args[0])),
+    )
+    allowed = max_week is not None and max_week >= 202639
+    assert tasks.dispatch_ready() == int(allowed)
+    assert len(published) == int(allowed)
+    with sessions() as session:
+        jobs = session.scalars(select(AnalysisJobRow)).all()
+        assert len(jobs) == int(allowed)
+
+
+def test_production_rejects_unauthorized_queued_job(
+    sessions, work_factory, completed_event, tmp_path: Path, monkeypatch
+) -> None:
+    """An already queued task cannot bypass the production ceiling."""
+    ready_workflow(work_factory, completed_event)
+    service = AnalysisJobService(
+        sessions,
+        worker_image='analysis:test',
+        cores=1,
+        load=False,
+        output_root=tmp_path,
+        initial_analysis_week=Epiweek.parse(202639),
+    )
+    job_id = service.claim_ready(Coverage.BR, Epiweek.parse(202639))
+    assert job_id is not None
+    settings = Settings(
+        _env_file=None,
+        environment='prod',
+        analysis_image='analysis:test',
+        analysis_initial_epiweek=202639,
+        analysis_max_epiweek=202638,
+    )
+    monkeypatch.setattr(tasks, 'get_settings', lambda: settings)
+    monkeypatch.setattr(tasks, 'session_factory', lambda: sessions)
+    assert tasks.run_analysis(str(job_id)) is False
+    assert tasks.retry_analysis(str(job_id)) is False
+    with sessions() as session:
+        job = session.get(AnalysisJobRow, job_id)
+        assert job is not None
+        assert job.status is AnalysisJobStatus.QUEUED

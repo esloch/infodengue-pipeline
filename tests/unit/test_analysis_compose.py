@@ -60,7 +60,7 @@ def test_staging_worker_env_and_output_mounts_are_isolated() -> None:
         'compose-staging.yaml', 'worker-orchestration'
     )
     mount = (
-        '${STAGING_ANALYSIS_OUTPUT_HOST_PATH:?set shared '
+        '${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:?set shared '
         'analysis output directory}'
         ':/var/lib/pipeline/analysis-output'
     )
@@ -97,10 +97,11 @@ def test_staging_worker_env_and_output_mounts_are_isolated() -> None:
     assert 'MINIO_BUCKET=sinan-infodengue' in core
     assert 'MINIO_PREFIX=approved-fixtures/' in core
     assert (
-        'STAGING_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/analysis-output'
+        'INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH=/opt/data/staging/analysis-output'
         in core
     )
-    assert 'STAGING_INTEGRATION_NETWORK=infodengue-staging_infodengue' in core
+    network = 'INFODENGUE_INTEGRATION_NETWORK='
+    assert network + 'infodengue-staging_infodengue' in core
     assert (
         'external: true' in Path('containers/compose-staging.yaml').read_text()
     )
@@ -168,7 +169,7 @@ def test_staging_e2e_writer_is_confined_to_finite_runner() -> None:
     assert 'PIPELINE_WORKER_ENV_FILE' in runner
     assert 'staging_integrations' in runner
     assert 'STAGING_E2E_FIXTURE_HOST_PATH' in runner
-    assert 'STAGING_ANALYSIS_OUTPUT_HOST_PATH' in runner
+    assert 'INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH' in runner
     assert 'restart: "no"' in runner
     assert 'PIPELINE_E2E_ENV_FILE' not in validator
     for name in (
@@ -319,11 +320,12 @@ def test_production_worker_env_mounts_and_networks() -> None:
     assert '${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}' in beat
     assert '${PIPELINE_ANALYSIS_IMAGE:' in analysis
     assert '    build:' not in analysis
-    assert '${PROD_SINAN_INCOMING_HOST_PATH:' in ingestion
+    assert '${INFODENGUE_SINAN_INCOMING_HOST_PATH:' in ingestion
     assert '/..:/var/lib/pipeline' in ingestion
-    assert '${PROD_ANALYSIS_OUTPUT_HOST_PATH:' in analysis
+    assert '${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:' in analysis
     assert ':/var/lib/pipeline/analysis-output' in analysis
-    assert '    volumes:' not in orchestration
+    assert '${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:' in orchestration
+    assert ':/var/lib/pipeline/analysis-output' in orchestration
     assert '    networks:' not in beat.split('\nvolumes:', 1)[0]
     for name in (
         'worker-ingestion',
@@ -401,9 +403,8 @@ def test_production_state_ports_and_integration_network() -> None:
     assert 'PIPELINE_POSTGRES_HOST_PORT=5436\n' in core
     assert 'PIPELINE_RABBITMQ_HOST_PORT=5675\n' in core
     assert '    external: true' in text
-    assert (
-        '${PROD_INTEGRATION_NETWORK:?set existing integration network}' in text
-    )
+    network = '${INFODENGUE_INTEGRATION_NETWORK:'
+    assert network + '?set existing integration network}' in text
     assert 'infodengue-staging_infodengue' not in text
     assert 'pipeline-postgres' in text
     assert 'pipeline-rabbitmq' in text

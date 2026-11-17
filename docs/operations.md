@@ -254,7 +254,7 @@ configuration. Credential and policy provisioning are deployment concerns.
 Configure the AlertaDengue legacy mirror to exclude the configured
 pipeline-owned prefix.
 
-`STAGING_ANALYSIS_OUTPUT_HOST_PATH` is the host-side bind source. On staging
+`INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH` is the host-side bind source. On staging
 its value is `/opt/data/staging/analysis-output`. `worker-analysis` and
 `validator` mount it at `/var/lib/pipeline/analysis-output`.
 `worker-orchestration` does not mount the directory; it only receives the

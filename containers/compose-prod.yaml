@@ -79,7 +79,7 @@ services:
       - default
       - prod_integrations
     volumes:
-      - ${PROD_SINAN_INCOMING_HOST_PATH:?set shared incoming directory}/..:/var/lib/pipeline
+      - ${INFODENGUE_SINAN_INCOMING_HOST_PATH:?set shared incoming directory}/..:/var/lib/pipeline
     healthcheck:
       test:
         - CMD-SHELL
@@ -145,6 +145,8 @@ services:
     networks:
       - default
       - prod_integrations
+    volumes:
+      - ${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
     healthcheck:
       test:
         - CMD-SHELL
@@ -179,7 +181,7 @@ services:
       - default
       - prod_integrations
     volumes:
-      - ${PROD_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
+      - ${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:?set shared analysis output directory}:/var/lib/pipeline/analysis-output
     healthcheck:
       test:
         - CMD-SHELL
@@ -247,9 +249,9 @@ services:
       - default
       - prod_integrations
     volumes:
-      - ${PROD_ANALYSIS_OUTPUT_HOST_PATH:?set analysis output directory}:/var/lib/pipeline/analysis-output:ro
+      - ${INFODENGUE_ANALYSIS_OUTPUT_HOST_PATH:?set analysis output directory}:/var/lib/pipeline/analysis-output:ro
       - ${RECIFE_REFERENCE_DIR:-/dev/null}:/reference:ro
-      - ${PROD_BULLETIN_OUTPUT_HOST_PATH:-/dev/null}:/var/lib/pipeline/bulletins
+      - ${INFODENGUE_BULLETIN_OUTPUT_HOST_PATH:-/dev/null}:/var/lib/pipeline/bulletins
       - ${BULLETIN_AUTH_HOST_PATH:-/dev/null}:/run/bulletin-authorization.json:ro
     healthcheck:
       test:
@@ -267,4 +269,4 @@ volumes:
 networks:
   prod_integrations:
     external: true
-    name: ${PROD_INTEGRATION_NETWORK:?set existing integration network}
+    name: ${INFODENGUE_INTEGRATION_NETWORK:?set existing integration network}
