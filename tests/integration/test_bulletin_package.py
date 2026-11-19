@@ -247,6 +247,25 @@ stopifnot(status == 0L)
 stopifnot(file.exists(qmd), file.info(qmd)$size > 0)
 qmd_text <- tolower(paste(readLines(qmd), collapse="\n"))
 stopifnot(grepl("executar_nowcasting: false", qmd_text, fixed=TRUE))
+for (enabled in c(TRUE, FALSE)) {
+  config <- jsonlite::fromJSON(config_path, simplifyVector=FALSE)
+  config$executar_nowcasting <- enabled
+  jsonlite::write_json(config, config_path, auto_unbox=TRUE)
+  output <- file.path(
+    "/tmp/bulletin-artifacts",
+    if (enabled) "enabled.qmd" else "disabled.qmd"
+  )
+  status <- system2("Rscript", c(
+    "/tmp/generate.R", config_path,
+    file.path(base, "notificacoes.csv"),
+    file.path(base, "historico_alerta.csv"), "''", ref_path, output,
+    "2026", "250000"
+  ))
+  stopifnot(status == 0L, file.exists(output))
+  generated <- tolower(paste(readLines(output), collapse="\n"))
+  expected <- paste0("executar_nowcasting: ", tolower(as.character(enabled)))
+  stopifnot(grepl(expected, generated, fixed=TRUE))
+}
 """,
         encoding='utf-8',
     )
@@ -260,6 +279,8 @@ stopifnot(grepl("executar_nowcasting: false", qmd_text, fixed=TRUE))
             docker,
             'run',
             '--rm',
+            '--network',
+            'none',
             '--volume',
             f'{artifacts}:/tmp/bulletin-artifacts:rw',
             '--volume',
@@ -269,7 +290,8 @@ stopifnot(grepl("executar_nowcasting: false", qmd_text, fixed=TRUE))
             '-lc',
             'Rscript /tmp/bulletin-artifacts/generate_synthetic.R '
             '&& quarto --version '
-            '&& quarto render /tmp/bulletin-artifacts/test.qmd --to pdf',
+            '&& quarto render /tmp/bulletin-artifacts/test.qmd --to pdf '
+            '&& quarto render /tmp/bulletin-artifacts/enabled.qmd --to pdf',
         ],
         capture_output=True,
         check=False,
@@ -285,6 +307,8 @@ stopifnot(grepl("executar_nowcasting: false", qmd_text, fixed=TRUE))
 
     qmd = artifacts / 'test.qmd'
     pdf = artifacts / 'test.pdf'
+    enabled_pdf = artifacts / 'enabled.pdf'
     assert qmd.is_file(), 'synthetic QMD was not created'
     assert pdf.is_file(), 'Quarto did not create the synthetic PDF'
     _validate_pdf(pdf)
+    _validate_pdf(enabled_pdf)

@@ -18,7 +18,9 @@ RUN quarto install tinytex --no-prompt
 RUN Rscript -e 'install.packages(c("fuzzyjoin", "ggpubr", "gt", "patchwork"), repos="https://cloud.r-project.org")' \
     && Rscript -e 'remotes::install_github(paste0("AlertaDengue/infodengue_intramunicipal@", Sys.getenv("INTRAMUNICIPAL_REVISION")), dependencies=NA, upgrade="never")' \
     && Rscript -e 'stopifnot(requireNamespace("infodengueintramunicipal", quietly=TRUE)); ns <- asNamespace("infodengueintramunicipal"); stopifnot("criar_qmd_boletim" %in% getNamespaceExports("infodengueintramunicipal"), is.function(get("criar_qmd_boletim", envir=ns))); fixture <- system.file("extdata", "feira_livre", "shape", "feira_livre_bairros.shp", package="infodengueintramunicipal"); stopifnot(nzchar(fixture), file.exists(fixture))'
-
+RUN /root/.TinyTeX/bin/x86_64-linux/tlmgr update --self \
+    && /root/.TinyTeX/bin/x86_64-linux/tlmgr install \
+      luatexbase babel-portuges hyphen-portuguese selnolig xltabular ltablex
 COPY pyproject.toml README.md LICENSE /tmp/bulletin-src/
 COPY src /tmp/bulletin-src/src
 RUN python -m pip install --no-cache-dir --no-deps /tmp/bulletin-src \
