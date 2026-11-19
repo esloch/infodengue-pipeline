@@ -13,8 +13,8 @@ The dedicated image extends the scientific analysis image and installs the
 upstream package at commit `fe82d1d5f6caf0a91aca585f0385cf1abea2e953`,
 Quarto 1.11.9 with its verified release checksum, and TeX. The base image has
 R 4.5.3, AlertTools 1.1.0, INLA 26.1.26.1, and tinytex 0.60; it lacks Quarto,
-the intramunicipal package, and nowcaster. The bulletin image installs both
-packages; `executar_nowcasting` in `configs/bulletin/recife.json` defaults to
+the intramunicipal package; it provides nowcasting through `mgcv`. The
+`executar_nowcasting` option in `configs/bulletin/recife.json` defaults to
 `false`. Set it to `true` to run intramunicipal nowcasting. Build this
 image separately from the Python workers; do not start the normal Compose stack
 to run a bulletin.

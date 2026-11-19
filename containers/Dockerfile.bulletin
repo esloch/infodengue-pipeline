@@ -21,10 +21,6 @@ RUN Rscript -e 'install.packages(c("fuzzyjoin", "ggpubr", "gt", "patchwork"), re
 RUN /root/.TinyTeX/bin/x86_64-linux/tlmgr update --self \
     && /root/.TinyTeX/bin/x86_64-linux/tlmgr install \
       luatexbase babel-portuges hyphen-portuguese selnolig xltabular ltablex
-ARG NOWCASTER_REVISION=80cd92d39b79554b7c27b70e69f8488bc73e8a31
-RUN Rscript -e 'remotes::install_github("covid19br/nowcaster@'"${NOWCASTER_REVISION}"'", dependencies=NA, upgrade="never")' \
-    && Rscript -e 'stopifnot(requireNamespace("nowcaster", quietly=TRUE), "nowcasting_mgcv" %in% getNamespaceExports("nowcaster"))'
-
 COPY pyproject.toml README.md LICENSE /tmp/bulletin-src/
 COPY src /tmp/bulletin-src/src
 RUN python -m pip install --no-cache-dir --no-deps /tmp/bulletin-src \

@@ -206,8 +206,6 @@ def test_upstream_package_generates_synthetic_qmd_and_pdf(
 stopifnot(
   requireNamespace("infodengueintramunicipal", quietly=TRUE)
 )
-stopifnot(requireNamespace("nowcaster", quietly=TRUE))
-stopifnot("nowcasting_mgcv" %in% getNamespaceExports("nowcaster"))
 stopifnot(identical(system2("quarto", "--version", stdout=TRUE), "1.11.9"))
 stopifnot(as.character(packageVersion("infodengueintramunicipal")) == "0.1.1")
 ns <- asNamespace("infodengueintramunicipal")
