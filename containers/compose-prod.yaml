@@ -196,10 +196,13 @@ services:
     env_file: ${PIPELINE_WORKER_ENV_FILE:-../.envs/.env.prod}
     environment:
       INFODENGUE_PIPELINE_ENVIRONMENT: prod
+      INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: /var/lib/pipeline/analysis-output
       INFODENGUE_PIPELINE_BULLETIN_AUTHORIZATION_FILE: /run/bulletin-authorization.json
       INFODENGUE_PIPELINE_BULLETIN_IMAGE: ${PIPELINE_BULLETIN_IMAGE:-}
       INFODENGUE_PIPELINE_BULLETIN_REFERENCE_SHA256: ${RECIFE_REFERENCE_SHA256:-}
+      INFODENGUE_PIPELINE_BULLETIN_REFERENCE: /reference/${RECIFE_REFERENCE_FILE:-unconfigured}
       INFODENGUE_PIPELINE_BULLETIN_CONFIG: /etc/infodengue/recife-production.json
+      INFODENGUE_PIPELINE_BULLETIN_OUTPUT_ROOT: /var/lib/pipeline/bulletins
     volumes:
       - ${BULLETIN_AUTH_HOST_PATH:-/dev/null}:/run/bulletin-authorization.json:ro
     command:
@@ -232,8 +235,8 @@ services:
       INFODENGUE_PIPELINE_BULLETIN_AUTHORIZATION_FILE: /run/bulletin-authorization.json
       INFODENGUE_PIPELINE_BULLETIN_IMAGE: ${PIPELINE_BULLETIN_IMAGE:-}
       INFODENGUE_PIPELINE_BULLETIN_REFERENCE_SHA256: ${RECIFE_REFERENCE_SHA256:-}
-      INFODENGUE_PIPELINE_BULLETIN_CONFIG: /etc/infodengue/recife-production.json
       INFODENGUE_PIPELINE_BULLETIN_REFERENCE: /reference/${RECIFE_REFERENCE_FILE:-unconfigured}
+      INFODENGUE_PIPELINE_BULLETIN_CONFIG: /etc/infodengue/recife-production.json
       INFODENGUE_PIPELINE_BULLETIN_OUTPUT_ROOT: /var/lib/pipeline/bulletins
     command:
       - celery

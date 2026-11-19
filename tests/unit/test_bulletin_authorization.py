@@ -162,11 +162,44 @@ def test_authorized_live_production_enables_beat(
     assert 'dispatch-ready-bulletins' in create_celery_app().conf.beat_schedule
 
 
+def test_live_bulletin_authorization_preserves_analysis_load_setting(
+    tmp_path: Path,
+) -> None:
+    """Bulletin authorization does not change scientific job load policy."""
+    path = tmp_path / 'authorization.json'
+    image = 'ghcr.io/esloch/bulletin@sha256:' + 'a' * 64
+    settings = _settings(
+        path,
+        analysis_load=False,
+        alerta_source_database_url='postgresql://reader@prod-db/dengue',
+        bulletin_history_database_url='postgresql://reader@prod-db/dengue',
+        bulletin_reference='/reference/recife.rds',
+        bulletin_reference_sha256='b' * 64,
+        bulletin_config='/etc/infodengue/recife-production.json',
+        bulletin_output_root='/var/lib/pipeline/bulletins',
+        bulletin_image=image,
+        analysis_output_root='/var/lib/pipeline/analysis-output',
+    )
+    path.write_text(json.dumps({
+        'profile': 'recife-live-production',
+        'pipeline_database': 'pipeline-postgres:5432/pipeline_prod',
+        'source_database': 'prod-db:5432/dengue',
+        'history_database': 'prod-db:5432/dengue',
+        'reference': '/reference/recife.rds',
+        'reference_sha256': 'b' * 64,
+        'config': '/etc/infodengue/recife-production.json',
+        'renderer_revision': settings.bulletin_renderer_revision,
+        'bulletin_image': image,
+        'output_root': '/var/lib/pipeline/bulletins',
+    }))
+
+    assert bulletin_authorized(settings)
+
+
 @pytest.mark.parametrize(
     'change',
     [
         {'bulletin_enabled': False},
-        {'analysis_load': False},
         {'bulletin_image': None},
         {'bulletin_image': 'ghcr.io/example/bulletin:latest'},
         {'bulletin_reference_sha256': None},
@@ -174,6 +207,17 @@ def test_authorized_live_production_enables_beat(
         {'bulletin_output_root': '/var/lib/pipeline/analysis-output'},
         {'bulletin_reference': Path('relative/reference.rds')},
         {'alerta_source_database_url': None},
+        {
+            'alerta_source_database_url': (
+                'postgresql://reader@pipeline-postgres/pipeline_prod'
+            )
+        },
+        {
+            'bulletin_history_database_url': (
+                'postgresql://reader@pipeline-postgres/pipeline_prod'
+            )
+        },
+        {'bulletin_config': '/etc/infodengue/other-config.json'},
     ],
 )
 def test_live_production_authorization_rejects_unapproved_settings(
@@ -205,4 +249,6 @@ def test_live_production_authorization_rejects_unapproved_settings(
         'bulletin_image': image,
         'output_root': '/var/lib/pipeline/bulletins',
     }))
-    assert not bulletin_authorized(settings.model_copy(update=change))
+    values = settings.model_dump()
+    values.update(change)
+    assert not bulletin_authorized(Settings(_env_file=None, **values))

@@ -22,7 +22,7 @@ def bulletin_authorized(settings: Settings) -> bool:
         return False
     if settings.environment == 'dev':
         return True
-    if settings.environment != 'prod' or not settings.analysis_load:
+    if settings.environment != 'prod':
         return False
     if settings.bulletin_authorization_file is None:
         return False
@@ -74,6 +74,9 @@ def bulletin_authorized(settings: Settings) -> bool:
                 and settings.bulletin_output_root
                 != settings.analysis_output_root
             )
+
+        if not settings.analysis_load:
+            return False
 
         expected = {
             'profile': 'isolated-staging-rehearsal',
