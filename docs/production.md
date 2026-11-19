@@ -453,6 +453,85 @@ isolated restore acceptance remain pending.
 The staging E2E result described in [operations](operations.md) has a different
 scope and used the staging profile.
 
+## Recife bulletin production activation
+
+Bulletin scheduling remains off unless both
+`INFODENGUE_PIPELINE_BULLETIN_ENABLED=true` and
+`INFODENGUE_PIPELINE_ANALYSIS_LOAD=true` are set and the read-only approval
+manifest exactly matches the runtime resources. Keep the source and history
+URLs read-only in Beat and the bulletin worker. The manifest profile is
+`recife-live-production`; it binds the pipeline, source and history database
+identities, approved reference and production bulletin config paths, renderer
+SHA-256, revision, immutable bulletin image digest, and dedicated output
+directory.
+Create it only after the data owner approves those identities and paths. The
+config baked into both reviewed images is
+`configs/bulletin/recife-production.json`; it enables Recife nowcasting while
+the normal bulletin config keeps it disabled.
+
+The complete manifest uses this schema; values must match the container
+settings exactly. `reference_sha256` must be the reviewed file's lowercase
+SHA-256 and is checked again by readiness before a job can run:
+
+```json
+{
+  "profile": "recife-live-production",
+  "pipeline_database": "pipeline-postgres:5432/pipeline_prod",
+  "source_database": "<approved-host>:<port>/<database>",
+  "history_database": "<approved-host>:<port>/<database>",
+  "reference": "/reference/recife_bairros.rds",
+  "reference_sha256": "<64 lowercase hex>",
+  "config": "/etc/infodengue/recife-production.json",
+  "renderer_revision": "<reviewed-renderer-revision>",
+  "bulletin_image": "<repository>@sha256:<64 lowercase hex>",
+  "output_root": "/var/lib/pipeline/bulletins"
+}
+```
+
+Before activation, verify the production PostgreSQL state and migrations, the
+read-only source/history roles, approved reference checksum and readability,
+and permissions and free space on the persistent bulletin output directory.
+Record the bulletin image's `repository@sha256:<64 lowercase hex>` digest and
+confirm it contains the reviewed intramunicipal package, Quarto version,
+application revision, reference/config paths, and nowcasting config. Never use
+an image tag alone. Prepare the exact authorization JSON on the host and mount
+it read-only through `BULLETIN_AUTH_HOST_PATH`. Render Compose with the private
+env file and inspect `config --images`; confirm Beat and the dedicated worker
+resolve the reviewed resources and the worker receives no writable source or
+history credentials.
+
+With Beat stopped, run the existing read-only bulletin acceptance/readiness
+check inside `worker-bulletin` for the selected epiweek:
+
+```sh
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin \
+  exec -T worker-bulletin python -m infodengue_pipeline.bulletin.readiness \
+  --week <approved-epiweek>
+```
+
+Require `RECIFE BULLETIN READINESS: PASS`. The command uses the same
+authorization and readiness checks as the scheduled worker and performs no
+rendering or database writes. Confirm the current PE analysis workflow and job
+succeeded, the persisted artifacts validate, Recife source/history queries
+succeed, and the approved reference/config validate.
+For controlled activation, set the explicit switches and exact manifest,
+start or recreate only the existing `worker-beat` and `worker-bulletin` in a
+reviewed maintenance window, and confirm the registered
+`dispatch-ready-bulletins` schedule. The existing queue, persisted job table,
+dispatch lease, readiness gate, idempotency key, and explicit retry flow remain
+the only scheduling and recovery path.
+
+Monitor Beat and `worker-bulletin` logs, queue depth, and bulletin job states
+(`queued`, `running`, `succeeded`, `failed`) in pipeline PostgreSQL. Confirm
+the rendered PDF and manifest are under the dedicated persistent output path;
+investigate a failed job before using the existing explicit retry task. To
+roll back safely, set `INFODENGUE_PIPELINE_BULLETIN_ENABLED=false` (or remove
+the authorization manifest), stop Beat first, then stop the bulletin worker.
+Do not delete persisted jobs or output artifacts. Keep the existing database,
+RabbitMQ, image, and output volume intact for diagnosis or a later reviewed
+reactivation. This runbook does not authorize a production restart or deploy.
+
 ## Next production gates
 
 Watcher supervision is defined in this production profile. The remaining

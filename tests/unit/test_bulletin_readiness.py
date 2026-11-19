@@ -312,3 +312,23 @@ def test_readiness_rejects_missing_reference_and_renderer_week(
     assert not result.eligible
     assert any('neighborhood sf reference' in item for item in result.reasons)
     assert any('reference week' in item for item in result.reasons)
+
+
+def test_readiness_rejects_changed_approved_reference(
+    sessions, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production readiness compares the mounted reference to its approval."""
+    reference = tmp_path / 'reference.rds'
+    reference.write_bytes(b'changed approved reference')
+    config = tmp_path / 'recife.json'
+    config.write_text(json.dumps({'geocode': 2611606}))
+    set_valid_source_data(monkeypatch)
+
+    result = CheckBulletinReadiness(
+        sessions,
+        'postgresql://read-only.test/dengue',
+        reference_sha256='a' * 64,
+    ).check(WEEK, reference, config)
+
+    assert not result.eligible
+    assert 'approved Recife reference checksum differs' in result.reasons

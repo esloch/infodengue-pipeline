@@ -33,6 +33,16 @@ def test_nowcasting_config_defaults_to_disabled(tmp_path: Path) -> None:
     assert 'executar_nowcasting' not in runner.validate_config(config)
 
 
+def test_production_recife_config_enables_nowcasting() -> None:
+    """Only the explicit production config enables validated nowcasting."""
+    default = runner.validate_config(Path('configs/bulletin/recife.json'))
+    production = runner.validate_config(
+        Path('configs/bulletin/recife-production.json')
+    )
+    assert default['executar_nowcasting'] is False
+    assert production['executar_nowcasting'] is True
+
+
 @pytest.mark.parametrize('value', [None, 0, 1, 'true', [], {}])
 def test_nowcasting_config_rejects_non_boolean(
     tmp_path: Path, value: object

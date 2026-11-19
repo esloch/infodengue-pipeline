@@ -1,5 +1,8 @@
 """Read-only execution readiness for a Recife intramunicipal bulletin."""
 
+import argparse
+import hashlib
+
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
@@ -42,10 +45,12 @@ class CheckBulletinReadiness:
         sessions: sessionmaker[Session],
         source_database_url: str | None,
         history_database_url: str | None = None,
+        reference_sha256: str | None = None,
     ) -> None:
         self._sessions = sessions
         self._source_database_url = source_database_url
         self._history_database_url = history_database_url
+        self._reference_sha256 = reference_sha256
 
     def check(
         self,
@@ -65,6 +70,12 @@ class CheckBulletinReadiness:
 
         reasons: list[str] = []
         try:
+            if self._reference_sha256 is not None:
+                digest = hashlib.sha256(reference.read_bytes()).hexdigest()
+                if digest != self._reference_sha256:
+                    raise ValueError(
+                        'approved Recife reference checksum differs'
+                    )
             validate_reference(reference)
         except (OSError, ValueError) as exc:
             reasons.append(str(exc))
@@ -189,3 +200,42 @@ class CheckBulletinReadiness:
             analysis_job_id=analysis_job_id,
             input_fingerprint=input_fingerprint,
         )
+
+
+def main() -> None:
+    """Run the existing read-only readiness check for one production week."""
+    from infodengue_pipeline.bulletin.authorization import bulletin_authorized
+    from infodengue_pipeline.config import get_settings
+    from infodengue_pipeline.db.engine import session_factory
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--week', required=True, type=int)
+    args = parser.parse_args()
+    settings = get_settings()
+    if not bulletin_authorized(settings):
+        raise SystemExit('bulletin production authorization is not valid')
+    source = settings.alerta_source_database_url
+    history = settings.bulletin_history_database_url
+    if source is None or history is None:
+        raise SystemExit('bulletin source/history URLs are not configured')
+    readiness = CheckBulletinReadiness(
+        session_factory(),
+        source.get_secret_value(),
+        history.get_secret_value(),
+        settings.bulletin_reference_sha256,
+    ).check(
+        args.week,
+        settings.bulletin_reference,
+        settings.bulletin_config,
+    )
+    if not readiness.eligible:
+        for reason in readiness.reasons:
+            print(f'BLOCKED: {reason}')
+        raise SystemExit(1)
+    print(f'RECIFE BULLETIN READINESS: PASS week={args.week}')
+    print(f'analysis_job_id={readiness.analysis_job_id}')
+    print(f'input_fingerprint={readiness.input_fingerprint}')
+
+
+if __name__ == '__main__':
+    main()

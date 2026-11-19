@@ -19,6 +19,7 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY scripts ./scripts
 COPY src ./src
+COPY configs/bulletin/recife-production.json /etc/infodengue/recife-production.json
 RUN uv sync --frozen
 
 ARG HOST_UID=1000

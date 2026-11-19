@@ -343,6 +343,14 @@ def test_production_worker_env_mounts_and_networks() -> None:
     )
     assert output_root in analysis
     assert output_root in orchestration
+    bulletin = _service_section(compose, 'worker-bulletin')
+    assert 'INFODENGUE_PIPELINE_BULLETIN_CONFIG:' in beat
+    assert 'recife-production.json' in beat
+    assert 'recife-production.json' in bulletin
+    assert 'INFODENGUE_PIPELINE_BULLETIN_IMAGE:' in beat
+    assert 'INFODENGUE_PIPELINE_BULLETIN_IMAGE:' in bulletin
+    assert '/var/lib/pipeline/bulletins' in bulletin
+    assert '/var/lib/pipeline/analysis-output:ro' in bulletin
 
 
 def test_production_env_roles_and_immutable_image() -> None:
