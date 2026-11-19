@@ -180,7 +180,7 @@ def test_live_bulletin_authorization_preserves_analysis_load_setting(
         bulletin_image=image,
         analysis_output_root='/var/lib/pipeline/analysis-output',
     )
-    path.write_text(json.dumps({
+    approval = {
         'profile': 'recife-live-production',
         'pipeline_database': 'pipeline-postgres:5432/pipeline_prod',
         'source_database': 'prod-db:5432/dengue',
@@ -191,7 +191,8 @@ def test_live_bulletin_authorization_preserves_analysis_load_setting(
         'renderer_revision': settings.bulletin_renderer_revision,
         'bulletin_image': image,
         'output_root': '/var/lib/pipeline/bulletins',
-    }))
+    }
+    path.write_text(json.dumps(approval))
 
     assert bulletin_authorized(settings)
 
@@ -237,7 +238,7 @@ def test_live_production_authorization_rejects_unapproved_settings(
         bulletin_image=image,
         analysis_output_root='/var/lib/pipeline/analysis-output',
     )
-    path.write_text(json.dumps({
+    approval = {
         'profile': 'recife-live-production',
         'pipeline_database': 'pipeline-postgres:5432/pipeline_prod',
         'source_database': 'prod-db:5432/dengue',
@@ -248,7 +249,8 @@ def test_live_production_authorization_rejects_unapproved_settings(
         'renderer_revision': settings.bulletin_renderer_revision,
         'bulletin_image': image,
         'output_root': '/var/lib/pipeline/bulletins',
-    }))
+    }
+    path.write_text(json.dumps(approval))
     values = settings.model_dump()
     values.update(change)
     assert not bulletin_authorized(Settings(_env_file=None, **values))
