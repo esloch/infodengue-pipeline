@@ -14,6 +14,40 @@ import pytest
 from infodengue_pipeline.bulletin import runner
 
 
+@pytest.mark.parametrize('value', [True, False])
+def test_nowcasting_config_accepts_boolean(
+    tmp_path: Path, value: bool
+) -> None:
+    """Explicit nowcasting settings retain their boolean value."""
+    config = tmp_path / 'config.json'
+    config.write_text(
+        json.dumps({'geocode': 2611606, 'executar_nowcasting': value})
+    )
+    assert runner.validate_config(config)['executar_nowcasting'] is value
+
+
+def test_nowcasting_config_defaults_to_disabled(tmp_path: Path) -> None:
+    """Older configs leave nowcasting disabled in the R adapter."""
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'geocode': 2611606}))
+    assert 'executar_nowcasting' not in runner.validate_config(config)
+
+
+@pytest.mark.parametrize('value', [None, 0, 1, 'true', [], {}])
+def test_nowcasting_config_rejects_non_boolean(
+    tmp_path: Path, value: object
+) -> None:
+    """JSON values other than true and false are invalid."""
+    config = tmp_path / 'config.json'
+    config.write_text(
+        json.dumps({'geocode': 2611606, 'executar_nowcasting': value})
+    )
+    with pytest.raises(
+        ValueError, match='executar_nowcasting must be a boolean'
+    ):
+        runner.validate_config(config)
+
+
 def test_separate_source_and_history_queries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

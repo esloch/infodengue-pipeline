@@ -250,6 +250,10 @@ def validate_config(config: Path) -> dict[str, Any]:
         raise ValueError('bulletin configuration must be a JSON object')
     if settings.get('geocode') != GEOCODE:
         raise ValueError('pilot config must select Recife')
+    if 'executar_nowcasting' in settings and not isinstance(
+        settings['executar_nowcasting'], bool
+    ):
+        raise ValueError('executar_nowcasting must be a boolean')
     return settings
 
 

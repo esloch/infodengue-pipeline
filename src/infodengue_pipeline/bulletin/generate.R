@@ -4,6 +4,10 @@ if (!requireNamespace('infodengueintramunicipal', quietly = TRUE)) {
   stop('infodengueintramunicipal is not installed')
 }
 config <- jsonlite::fromJSON(args[[1]], simplifyVector = FALSE)
+executar_nowcasting <- config$executar_nowcasting
+if (!'executar_nowcasting' %in% names(config)) executar_nowcasting <- FALSE
+if (!is.logical(executar_nowcasting) || length(executar_nowcasting) != 1L ||
+    is.na(executar_nowcasting)) stop('executar_nowcasting must be a boolean')
 reference <- args[[5]]
 infodengueintramunicipal::preparar_referencia(
   reference, config$reference_columns$neighborhood,
@@ -29,5 +33,5 @@ infodengueintramunicipal::criar_qmd_boletim(
   limiar_epidemico = config$thresholds$epidemic,
   limiar_posseason = config$thresholds$postseason,
   config_climatica = config$climate,
-  executar_nowcasting = FALSE, render = FALSE, overwrite = FALSE
+  executar_nowcasting = executar_nowcasting, render = FALSE, overwrite = FALSE
 )

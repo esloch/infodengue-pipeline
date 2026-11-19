@@ -1,5 +1,6 @@
 {
   "geocode": 2611606,
+  "executar_nowcasting": false,
   "source": "boletins/Estaduais/dados/parameters.csv, Recife A90 row",
   "thresholds": {
     "preseason": 6.17929814643526,
