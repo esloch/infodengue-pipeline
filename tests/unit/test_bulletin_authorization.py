@@ -123,3 +123,134 @@ def test_rehearsal_acceptance_rejects_normal_production(
         validate_rehearsal_e2e(
             'recife/object.dbf', 'a' * 64, 30, _settings(tmp_path / 'missing')
         )
+
+
+def test_authorized_live_production_enables_beat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production needs an exact resource and immutable image approval."""
+    path = tmp_path / 'authorization.json'
+    image = 'ghcr.io/esloch/bulletin@sha256:' + 'a' * 64
+    settings = _settings(
+        path,
+        alerta_source_database_url='postgresql://reader@prod-db/dengue',
+        bulletin_history_database_url='postgresql://reader@prod-db/dengue',
+        bulletin_reference='/reference/recife.rds',
+        bulletin_reference_sha256='b' * 64,
+        bulletin_config='/etc/infodengue/recife-production.json',
+        bulletin_output_root='/var/lib/pipeline/bulletins',
+        bulletin_image=image,
+        analysis_output_root='/var/lib/pipeline/analysis-output',
+    )
+    approval = {
+        'profile': 'recife-live-production',
+        'pipeline_database': 'pipeline-postgres:5432/pipeline_prod',
+        'source_database': 'prod-db:5432/dengue',
+        'history_database': 'prod-db:5432/dengue',
+        'reference': '/reference/recife.rds',
+        'reference_sha256': 'b' * 64,
+        'config': '/etc/infodengue/recife-production.json',
+        'renderer_revision': settings.bulletin_renderer_revision,
+        'bulletin_image': image,
+        'output_root': '/var/lib/pipeline/bulletins',
+    }
+    path.write_text(json.dumps(approval))
+    assert bulletin_authorized(settings)
+    monkeypatch.setattr(
+        'infodengue_pipeline.messaging.celery.get_settings', lambda: settings
+    )
+    assert 'dispatch-ready-bulletins' in create_celery_app().conf.beat_schedule
+
+
+def test_live_bulletin_authorization_preserves_analysis_load_setting(
+    tmp_path: Path,
+) -> None:
+    """Bulletin authorization does not change scientific job load policy."""
+    path = tmp_path / 'authorization.json'
+    image = 'ghcr.io/esloch/bulletin@sha256:' + 'a' * 64
+    settings = _settings(
+        path,
+        analysis_load=False,
+        alerta_source_database_url='postgresql://reader@prod-db/dengue',
+        bulletin_history_database_url='postgresql://reader@prod-db/dengue',
+        bulletin_reference='/reference/recife.rds',
+        bulletin_reference_sha256='b' * 64,
+        bulletin_config='/etc/infodengue/recife-production.json',
+        bulletin_output_root='/var/lib/pipeline/bulletins',
+        bulletin_image=image,
+        analysis_output_root='/var/lib/pipeline/analysis-output',
+    )
+    approval = {
+        'profile': 'recife-live-production',
+        'pipeline_database': 'pipeline-postgres:5432/pipeline_prod',
+        'source_database': 'prod-db:5432/dengue',
+        'history_database': 'prod-db:5432/dengue',
+        'reference': '/reference/recife.rds',
+        'reference_sha256': 'b' * 64,
+        'config': '/etc/infodengue/recife-production.json',
+        'renderer_revision': settings.bulletin_renderer_revision,
+        'bulletin_image': image,
+        'output_root': '/var/lib/pipeline/bulletins',
+    }
+    path.write_text(json.dumps(approval))
+
+    assert bulletin_authorized(settings)
+
+
+@pytest.mark.parametrize(
+    'change',
+    [
+        {'bulletin_enabled': False},
+        {'bulletin_image': None},
+        {'bulletin_image': 'ghcr.io/example/bulletin:latest'},
+        {'bulletin_reference_sha256': None},
+        {'bulletin_reference_sha256': 'invalid'},
+        {'bulletin_output_root': '/var/lib/pipeline/analysis-output'},
+        {'bulletin_reference': Path('relative/reference.rds')},
+        {'alerta_source_database_url': None},
+        {
+            'alerta_source_database_url': (
+                'postgresql://reader@pipeline-postgres/pipeline_prod'
+            )
+        },
+        {
+            'bulletin_history_database_url': (
+                'postgresql://reader@pipeline-postgres/pipeline_prod'
+            )
+        },
+        {'bulletin_config': '/etc/infodengue/other-config.json'},
+    ],
+)
+def test_live_production_authorization_rejects_unapproved_settings(
+    tmp_path: Path, change: dict[str, object]
+) -> None:
+    """Missing, mutable or mismatched production configuration fails closed."""
+    path = tmp_path / 'authorization.json'
+    image = 'ghcr.io/esloch/bulletin@sha256:' + 'a' * 64
+    settings = _settings(
+        path,
+        alerta_source_database_url='postgresql://reader@prod-db/dengue',
+        bulletin_history_database_url='postgresql://reader@prod-db/dengue',
+        bulletin_reference='/reference/recife.rds',
+        bulletin_reference_sha256='b' * 64,
+        bulletin_config='/etc/infodengue/recife-production.json',
+        bulletin_output_root='/var/lib/pipeline/bulletins',
+        bulletin_image=image,
+        analysis_output_root='/var/lib/pipeline/analysis-output',
+    )
+    approval = {
+        'profile': 'recife-live-production',
+        'pipeline_database': 'pipeline-postgres:5432/pipeline_prod',
+        'source_database': 'prod-db:5432/dengue',
+        'history_database': 'prod-db:5432/dengue',
+        'reference': '/reference/recife.rds',
+        'reference_sha256': 'b' * 64,
+        'config': '/etc/infodengue/recife-production.json',
+        'renderer_revision': settings.bulletin_renderer_revision,
+        'bulletin_image': image,
+        'output_root': '/var/lib/pipeline/bulletins',
+    }
+    path.write_text(json.dumps(approval))
+    values = settings.model_dump()
+    values.update(change)
+    assert not bulletin_authorized(Settings(_env_file=None, **values))

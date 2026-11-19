@@ -69,3 +69,19 @@ def test_broker_failure_leaves_queued_job_for_later_poll(
     with pytest.raises(ConnectionError, match='broker unavailable'):
         tasks.dispatch_bulletins.run()
     assert calls == ['claim']
+
+
+def test_bulletin_worker_rechecks_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Broker delivery cannot execute if worker authorization is absent."""
+    monkeypatch.setattr(
+        tasks, 'get_settings', lambda: Settings(_env_file=None)
+    )
+    monkeypatch.setattr(tasks, 'bulletin_authorized', lambda _settings: False)
+    monkeypatch.setattr(
+        tasks,
+        '_bulletin_jobs',
+        lambda _settings: pytest.fail('unauthorized worker built job service'),
+    )
+    assert tasks.run_bulletin.run(str(uuid4())) is False

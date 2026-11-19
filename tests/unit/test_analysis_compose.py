@@ -343,6 +343,38 @@ def test_production_worker_env_mounts_and_networks() -> None:
     )
     assert output_root in analysis
     assert output_root in orchestration
+    bulletin = _service_section(compose, 'worker-bulletin')
+    assert (
+        'INFODENGUE_PIPELINE_BULLETIN_REFERENCE: '
+        '/reference/${RECIFE_REFERENCE_FILE:-unconfigured}' in beat
+    )
+    assert (
+        'INFODENGUE_PIPELINE_BULLETIN_REFERENCE: '
+        '/reference/${RECIFE_REFERENCE_FILE:-unconfigured}' in bulletin
+    )
+    assert 'INFODENGUE_PIPELINE_ANALYSIS_OUTPUT_ROOT: ' in beat
+    assert 'INFODENGUE_PIPELINE_BULLETIN_CONFIG:' in beat
+    assert 'recife-production.json' in beat
+    assert 'recife-production.json' in bulletin
+    assert 'INFODENGUE_PIPELINE_BULLETIN_IMAGE:' in beat
+    assert 'INFODENGUE_PIPELINE_BULLETIN_IMAGE:' in bulletin
+    for setting in (
+        'INFODENGUE_PIPELINE_BULLETIN_AUTHORIZATION_FILE:',
+        'INFODENGUE_PIPELINE_BULLETIN_IMAGE:',
+        'INFODENGUE_PIPELINE_BULLETIN_REFERENCE_SHA256:',
+        'INFODENGUE_PIPELINE_BULLETIN_REFERENCE:',
+        'INFODENGUE_PIPELINE_BULLETIN_CONFIG:',
+        'INFODENGUE_PIPELINE_BULLETIN_OUTPUT_ROOT:',
+    ):
+        beat_value = next(
+            line for line in beat.splitlines() if setting in line
+        )
+        bulletin_value = next(
+            line for line in bulletin.splitlines() if setting in line
+        )
+        assert beat_value == bulletin_value
+    assert '/var/lib/pipeline/bulletins' in bulletin
+    assert '/var/lib/pipeline/analysis-output:ro' in bulletin
 
 
 def test_production_env_roles_and_immutable_image() -> None:

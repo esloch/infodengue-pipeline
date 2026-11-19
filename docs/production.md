@@ -453,6 +453,135 @@ isolated restore acceptance remain pending.
 The staging E2E result described in [operations](operations.md) has a different
 scope and used the staging profile.
 
+## Recife bulletin production activation
+
+Bulletin scheduling remains off unless
+`INFODENGUE_PIPELINE_BULLETIN_ENABLED=true` and the read-only approval
+manifest exactly matches the runtime resources. Keep the existing
+`INFODENGUE_PIPELINE_ANALYSIS_LOAD` value unchanged: the orchestration worker
+uses it when it creates scientific analysis jobs, and bulletin authorization
+has its own independent gate. This activation does not require changing or
+restarting the analysis worker. Keep the source and history URLs read-only in
+Beat and the bulletin worker. The manifest profile is
+`recife-live-production`; it binds the pipeline, source and history database
+identities, approved reference and production bulletin config paths, renderer
+SHA-256, revision, immutable bulletin image digest, and dedicated output
+directory.
+Create it only after the data owner approves those identities and paths. The
+config baked into both reviewed images is
+`configs/bulletin/recife-production.json`; it enables Recife nowcasting while
+the normal bulletin config keeps it disabled.
+
+The complete manifest uses this schema; values must match the container
+settings exactly. `reference_sha256` must be the reviewed file's lowercase
+SHA-256 and is checked again by readiness before a job can run:
+
+```json
+{
+  "profile": "recife-live-production",
+  "pipeline_database": "pipeline-postgres:5432/pipeline_prod",
+  "source_database": "<approved-host>:<port>/<database>",
+  "history_database": "<approved-host>:<port>/<database>",
+  "reference": "/reference/recife_bairros.rds",
+  "reference_sha256": "<64 lowercase hex>",
+  "config": "/etc/infodengue/recife-production.json",
+  "renderer_revision": "<reviewed-renderer-revision>",
+  "bulletin_image": "<repository>@sha256:<64 lowercase hex>",
+  "output_root": "/var/lib/pipeline/bulletins"
+}
+```
+
+Before activation, verify the production PostgreSQL state and migrations, the
+read-only source/history roles, approved reference checksum and readability,
+and permissions and free space on the persistent bulletin output directory.
+Set `PIPELINE_BULLETIN_IMAGE` to the reviewed
+`repository@sha256:<64 lowercase hex>` reference. Docker verifies the content
+digest when pulling that reference; use Compose to confirm the resolved image
+reference and Docker's pull to verify the pinned content:
+
+```sh
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin config --images
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin pull worker-bulletin
+```
+
+Confirm the bulletin line from `config --images` is the exact manifest-bound
+reference. A successful Compose pull of that digest-pinned reference uses
+Docker's built-in content-digest verification.
+Confirm the image contains the reviewed intramunicipal package, Quarto
+version, application revision, reference/config paths, and nowcasting config.
+Do not substitute a tag or image ID for the digest reference. Prepare the
+exact authorization JSON on the host and mount it read-only through
+`BULLETIN_AUTH_HOST_PATH`. Compose gives Beat and the dedicated worker the same
+reference path, checksum, config path, image reference, and output root. Beat
+only needs these authorization settings to register the existing schedule;
+the bulletin worker mounts the approved reference and analysis artifacts
+read-only for its dispatch-time and execution readiness checks. Confirm the
+worker receives no writable source or history credentials.
+
+With Beat stopped, run the existing read-only readiness check in a one-shot
+bulletin container for the selected epiweek. This validates before the worker
+starts consuming any already queued bulletin deliveries:
+
+```sh
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin \
+  stop worker-beat
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin \
+  run --rm --no-deps --entrypoint python worker-bulletin \
+  -m infodengue_pipeline.bulletin.readiness --week <approved-epiweek>
+```
+
+Require `RECIFE BULLETIN READINESS: PASS`. The command uses the same
+authorization and readiness checks as the scheduled worker and performs no
+rendering or database writes. Confirm the current PE analysis workflow and job
+succeeded, the persisted artifacts validate, Recife source/history queries
+succeed, and the approved reference/config validate.
+After readiness passes, start the existing bulletin worker, then start or
+recreate only the existing Beat service and confirm the registered
+`dispatch-ready-bulletins` schedule:
+
+```sh
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin \
+  up -d worker-bulletin
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin \
+  up -d --force-recreate worker-beat
+```
+
+Use a reviewed maintenance window and leave the analysis worker and its env
+file unchanged. The existing queue, persisted job table, dispatch lease,
+readiness gate, idempotency key, and explicit retry flow remain the only
+scheduling and recovery path.
+
+Monitor Beat and `worker-bulletin` logs, queue depth, and bulletin job states
+(`queued`, `running`, `succeeded`, `failed`) in pipeline PostgreSQL. Confirm
+the rendered PDF and manifest are under the dedicated persistent output path;
+investigate a failed job before using the existing explicit retry task. To
+roll back safely, set `INFODENGUE_PIPELINE_BULLETIN_ENABLED=false` (or remove
+the authorization manifest), then stop Beat and the bulletin worker gracefully
+and recreate only those two services from the disabled configuration:
+
+```sh
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin \
+  stop worker-beat worker-bulletin
+docker compose --env-file .envs/.env.prod \
+  -f containers/compose-prod.yaml --profile bulletin \
+  up -d --force-recreate worker-beat worker-bulletin
+```
+
+A graceful worker stop may finish its current render. Unrun messages already
+in RabbitMQ remain queued; their persisted rows remain `queued`, and a later
+reviewed reactivation can redispatch them after the existing lease expires.
+The disabled worker acknowledges stale deliveries without rendering. Do not
+purge the queue or delete persisted jobs or output artifacts. Keep the existing database,
+RabbitMQ, image, and output volume intact for diagnosis or a later reviewed
+reactivation. This runbook does not authorize a production restart or deploy.
+
 ## Next production gates
 
 Watcher supervision is defined in this production profile. The remaining

@@ -96,7 +96,12 @@ def _bulletin_jobs(settings: Settings) -> BulletinJobService:
     sessions = session_factory()
     return BulletinJobService(
         sessions,
-        CheckBulletinReadiness(sessions, source_url, history_url),
+        CheckBulletinReadiness(
+            sessions,
+            source_url,
+            history_url,
+            settings.bulletin_reference_sha256,
+        ),
         revision=settings.bulletin_renderer_revision,
         reference=settings.bulletin_reference,
         config=settings.bulletin_config,
